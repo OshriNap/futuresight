@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #111118;
+    --bg-card: #1a1a2e;
+    --bg-hover: #24243e;
+    --accent-blue: #4f6ef7;
+    --accent-purple: #7c3aed;
+    --border-color: #2a2a3e;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: #e4e4e7;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #3a3a4e;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4a4a5e;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border bg-bg-card p-5;
+  }
+
+  .card-hover {
+    @apply card transition-colors duration-200 hover:bg-bg-hover hover:border-border-light;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .badge-active {
+    @apply badge bg-status-active/15 text-status-active;
+  }
+
+  .badge-resolved {
+    @apply badge bg-status-resolved/15 text-status-resolved;
+  }
+
+  .badge-expired {
+    @apply badge bg-status-expired/15 text-status-expired;
+  }
+
+  .confidence-high {
+    @apply text-confidence-high;
+  }
+
+  .confidence-medium {
+    @apply text-confidence-medium;
+  }
+
+  .confidence-low {
+    @apply text-confidence-low;
+  }
+
+  .input-field {
+    @apply w-full rounded-lg border border-border bg-bg-secondary px-4 py-2.5 text-sm text-white placeholder-gray-500 outline-none transition-colors focus:border-accent-blue focus:ring-1 focus:ring-accent-blue;
+  }
+
+  .btn-primary {
+    @apply rounded-lg bg-accent-blue px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-blue/80 focus:outline-none focus:ring-2 focus:ring-accent-blue/50;
+  }
+
+  .btn-secondary {
+    @apply rounded-lg border border-border bg-bg-card px-4 py-2.5 text-sm font-medium text-gray-300 transition-colors hover:bg-bg-hover focus:outline-none;
+  }
+
+  .btn-danger {
+    @apply rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/50;
+  }
+}
