@@ -103,8 +103,27 @@ export default function AgentsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await getAgents();
-        setAgents(data);
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const res = await fetch(`${API_BASE}/api/agents`);
+        if (res.ok) {
+          const data = await res.json();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mapped = (Array.isArray(data) ? data : []).map((a: any) => ({
+            id: a.id,
+            name: a.name || "Agent",
+            type: a.type || "specialist",
+            model: a.model || undefined,
+            brier_score: a.avg_brier_score ?? a.brier_score ?? 0,
+            total_predictions: a.total_predictions ?? 0,
+            resolved_predictions: a.resolved_predictions ?? 0,
+            accuracy_rate: a.accuracy_rate ?? 0,
+            active: a.active ?? true,
+            created_at: a.created_at || new Date().toISOString(),
+            last_active: a.last_active || undefined,
+            description: a.description || undefined,
+          }));
+          if (mapped.length > 0) setAgents(mapped);
+        }
       } catch {
         // Use mock data
       }
@@ -129,7 +148,7 @@ export default function AgentsPage() {
         <div className="card">
           <p className="text-sm text-gray-400">Best Brier Score</p>
           <p className="mt-2 text-2xl font-bold text-confidence-high">
-            {Math.min(...agents.map((a) => a.brier_score)).toFixed(3)}
+            {Math.min(...agents.map((a) => a.brier_score ?? 0)).toFixed(3)}
           </p>
         </div>
       </div>
@@ -199,13 +218,13 @@ export default function AgentsPage() {
                 <p
                   className={`text-lg font-bold ${getBrierColor(agent.brier_score)}`}
                 >
-                  {agent.brier_score.toFixed(3)}
+                  {(agent.brier_score ?? 0).toFixed(3)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">Accuracy</p>
                 <p className="text-lg font-bold text-white">
-                  {Math.round(agent.accuracy_rate * 100)}%
+                  {Math.round((agent.accuracy_rate ?? 0) * 100)}%
                 </p>
               </div>
               <div>
@@ -227,13 +246,13 @@ export default function AgentsPage() {
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-primary">
                 <div
                   className={`h-full rounded-full ${
-                    agent.accuracy_rate >= 0.7
+                    (agent.accuracy_rate ?? 0) >= 0.7
                       ? "bg-confidence-high"
-                      : agent.accuracy_rate >= 0.5
+                      : (agent.accuracy_rate ?? 0) >= 0.5
                         ? "bg-confidence-medium"
                         : "bg-confidence-low"
                   }`}
-                  style={{ width: `${agent.accuracy_rate * 100}%` }}
+                  style={{ width: `${(agent.accuracy_rate ?? 0) * 100}%` }}
                 />
               </div>
             </div>

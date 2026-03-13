@@ -35,7 +35,7 @@ class Scratchpad(Base):
     priority: Mapped[str] = mapped_column(String(20), default="medium")
     status: Mapped[str] = mapped_column(String(30), default="active")  # active, implemented, rejected, archived
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String))
-    metadata: Mapped[dict | None] = mapped_column(JSONB)
+    extra_data: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -1,6 +1,8 @@
-FROM python:3.12-slim
+FROM python:3.12.7-slim-bookworm
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv
 

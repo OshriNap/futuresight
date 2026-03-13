@@ -104,11 +104,29 @@ export default function PredictionsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const params: Record<string, string> = {};
-        if (timeHorizon !== "all") params.time_horizon = timeHorizon;
-        if (status !== "all") params.status = status;
-        const data = await getPredictions(params);
-        setPredictions(data.items);
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const params = new URLSearchParams();
+        if (timeHorizon !== "all") params.set("time_horizon", timeHorizon);
+        const query = params.toString();
+        const res = await fetch(`${API_BASE}/api/predictions/${query ? `?${query}` : ""}`);
+        if (res.ok) {
+          const data = await res.json();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mapped = (Array.isArray(data) ? data : []).map((p: any) => ({
+            id: p.id,
+            title: p.prediction_text || "Prediction",
+            description: p.reasoning || "",
+            probability: p.confidence || 0.5,
+            confidence: p.confidence || 0.5,
+            time_horizon: p.time_horizon || "medium",
+            status: "active" as const,
+            source: "System",
+            category: p.data_signals?.category || "general",
+            created_at: p.created_at || new Date().toISOString(),
+            updated_at: p.created_at || new Date().toISOString(),
+          }));
+          if (mapped.length > 0) setPredictions(mapped);
+        }
       } catch {
         // Use mock data
       }

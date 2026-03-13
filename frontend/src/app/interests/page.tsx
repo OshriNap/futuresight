@@ -73,8 +73,23 @@ export default function InterestsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await getInterests();
-        setInterests(data);
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const res = await fetch(`${API_BASE}/api/interests`);
+        if (res.ok) {
+          const data = await res.json();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mapped = (Array.isArray(data) ? data : []).map((i: any) => ({
+            id: i.id,
+            name: i.name || "Interest",
+            keywords: Array.isArray(i.keywords) ? i.keywords : [],
+            priority: i.priority || "medium",
+            category: i.category || "General",
+            active: i.active ?? true,
+            created_at: i.created_at || new Date().toISOString(),
+            updated_at: i.updated_at || new Date().toISOString(),
+          }));
+          if (mapped.length > 0) setInterests(mapped);
+        }
       } catch {
         // Use mock data
       }

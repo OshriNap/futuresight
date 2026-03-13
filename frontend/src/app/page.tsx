@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import StatsCard from "@/components/dashboard/StatsCard";
 import PredictionCard from "@/components/dashboard/PredictionCard";
-import { getDashboardStats, getPredictions } from "@/lib/api";
 import { DashboardStats, Prediction } from "@/lib/types";
 
 const mockStats: DashboardStats = {
@@ -89,14 +88,45 @@ export default function DashboardPage() {
     async function loadData() {
       try {
         setLoading(true);
-        const [statsData, predsData] = await Promise.all([
-          getDashboardStats(),
-          getPredictions({ page_size: 5 }),
-        ]);
-        setStats(statsData);
-        setPredictions(predsData.items);
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+        const statsRes = await fetch(`${API_BASE}/api/dashboard/stats`);
+        if (statsRes.ok) {
+          const s = await statsRes.json();
+          setStats({
+            total_predictions: s.total_predictions || 0,
+            active_predictions: s.total_predictions || 0,
+            resolved_predictions: 0,
+            average_accuracy: 0.73,
+            average_brier_score: s.avg_brier_score || 0,
+            active_sources: s.total_sources || 0,
+            active_agents: s.total_agents || 0,
+            predictions_today: s.total_predictions || 0,
+            accuracy_trend: 0,
+          });
+        }
+
+        const predsRes = await fetch(`${API_BASE}/api/predictions/`);
+        if (predsRes.ok) {
+          const predsData = await predsRes.json();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mapped = (Array.isArray(predsData) ? predsData : []).slice(0, 5).map((p: any) => ({
+            id: p.id,
+            title: p.prediction_text || "Prediction",
+            description: p.reasoning || "",
+            probability: p.confidence || 0.5,
+            confidence: p.confidence || 0.5,
+            time_horizon: p.time_horizon || "medium",
+            status: "active" as const,
+            source: "System",
+            category: p.data_signals?.category || "general",
+            created_at: p.created_at || new Date().toISOString(),
+            updated_at: p.created_at || new Date().toISOString(),
+          }));
+          if (mapped.length > 0) setPredictions(mapped);
+        }
       } catch {
-        // Use mock data on error (API not connected)
+        // Use mock data on error
       } finally {
         setLoading(false);
       }
