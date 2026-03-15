@@ -3,9 +3,9 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -16,6 +16,8 @@ from app.models.meta import (
     Scratchpad,
     SourceReliability,
 )
+from app.models.prediction import Prediction, PredictionScore
+from app.models.source import Source
 
 router = APIRouter()
 
@@ -31,11 +33,41 @@ class ScratchpadResponse(BaseModel):
     priority: str
     status: str
     tags: list[str] | None
-    metadata: dict | None
+    extra_data: dict | None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ScratchpadCreate(BaseModel):
+    agent_type: str
+    title: str
+    content: str
+    category: str = "insight"
+    priority: str = "medium"
+    tags: list[str] | None = None
+    extra_data: dict | None = None
+
+
+@router.post("/scratchpad", response_model=ScratchpadResponse, status_code=201)
+async def create_scratchpad(
+    data: ScratchpadCreate, db: AsyncSession = Depends(get_db)
+):
+    """Create a new scratchpad entry. Used by Claude Code scheduled tasks."""
+    entry = Scratchpad(
+        agent_type=data.agent_type,
+        title=data.title,
+        content=data.content,
+        category=data.category,
+        priority=data.priority,
+        tags=data.tags,
+        extra_data=data.extra_data,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+    return entry
 
 
 @router.get("/scratchpad", response_model=list[ScratchpadResponse])
@@ -146,6 +178,36 @@ class MetaAgentRunResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MetaRunCreate(BaseModel):
+    agent_type: str
+    trigger: str = "claude_code_scheduled_task"
+    input_summary: str | None = None
+    output_summary: str
+    actions_taken: list[str] | None = None
+    scratchpad_entries_created: int = 0
+    duration_seconds: float | None = None
+
+
+@router.post("/runs", response_model=MetaAgentRunResponse, status_code=201)
+async def create_meta_run(
+    data: MetaRunCreate, db: AsyncSession = Depends(get_db)
+):
+    """Log a meta-agent run. Used by Claude Code scheduled tasks."""
+    run = MetaAgentRun(
+        agent_type=data.agent_type,
+        trigger=data.trigger,
+        input_summary=data.input_summary,
+        output_summary=data.output_summary,
+        actions_taken=data.actions_taken,
+        scratchpad_entries_created=data.scratchpad_entries_created,
+        duration_seconds=data.duration_seconds,
+    )
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+    return run
+
+
 @router.get("/runs", response_model=list[MetaAgentRunResponse])
 async def list_meta_runs(
     agent_type: str | None = None,
@@ -159,13 +221,34 @@ async def list_meta_runs(
     return result.scalars().all()
 
 
+# --- System Stats ---
+
+@router.get("/stats")
+async def get_system_stats(db: AsyncSession = Depends(get_db)):
+    """System-wide stats for Claude Code scheduled tasks to get context."""
+    source_count = (await db.execute(select(func.count(Source.id)))).scalar() or 0
+    pred_count = (await db.execute(select(func.count(Prediction.id)))).scalar() or 0
+    avg_brier = (await db.execute(select(func.avg(PredictionScore.brier_score)))).scalar()
+    scored_count = (await db.execute(select(func.count(PredictionScore.id)))).scalar() or 0
+
+    platforms = await db.execute(select(Source.platform, func.count(Source.id)).group_by(Source.platform))
+    platform_counts = {row[0]: row[1] for row in platforms.all()}
+
+    return {
+        "total_sources": source_count,
+        "total_predictions": pred_count,
+        "scored_predictions": scored_count,
+        "avg_brier_score": round(avg_brier, 4) if avg_brier else None,
+        "platforms": platform_counts,
+    }
+
+
 # --- Trigger Meta Agents ---
 
 @router.post("/trigger/{agent_type}")
 async def trigger_meta_agent(agent_type: str):
-    """Manually trigger a meta-agent run."""
+    """Manually trigger a meta-agent run (simplified DB-only version)."""
     from app.tasks.meta_tasks import (
-        run_feature_ideator,
         run_method_researcher,
         run_source_evaluator,
         run_strategy_optimizer,
@@ -175,12 +258,79 @@ async def trigger_meta_agent(agent_type: str):
         "source_evaluator": run_source_evaluator,
         "strategy_optimizer": run_strategy_optimizer,
         "method_researcher": run_method_researcher,
-        "feature_ideator": run_feature_ideator,
     }
     task_fn = task_map.get(agent_type)
     if not task_fn:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail=f"Unknown agent type: {agent_type}")
+        raise HTTPException(status_code=400, detail=f"Unknown agent type: {agent_type}. Thinking is handled by Claude Code scheduled tasks.")
 
-    task_fn.delay()
-    return {"status": "triggered", "agent_type": agent_type}
+    result = await task_fn()
+    return {"status": "completed", "agent_type": agent_type, "result": result}
+
+
+@router.post("/collect/{collector_name}")
+async def trigger_collection(collector_name: str):
+    """Trigger a data collection run."""
+    from app.tasks.collection_tasks import (
+        collect_all,
+        collect_gdelt,
+        collect_manifold,
+        collect_polymarket,
+        collect_reddit,
+    )
+
+    collector_map = {
+        "polymarket": collect_polymarket,
+        "manifold": collect_manifold,
+        "gdelt": collect_gdelt,
+        "reddit": collect_reddit,
+        "all": collect_all,
+    }
+    fn = collector_map.get(collector_name)
+    if not fn:
+        raise HTTPException(status_code=400, detail=f"Unknown collector: {collector_name}")
+
+    result = await fn()
+    return {"status": "completed", "collector": collector_name, "result": result}
+
+
+@router.post("/generate-predictions")
+async def trigger_predictions():
+    """Generate predictions from collected sources using the tool registry."""
+    from app.tasks.prediction_tasks import generate_predictions
+    result = await generate_predictions()
+    return {"status": "completed", "result": result}
+
+
+@router.post("/build-graph")
+async def trigger_graph_build():
+    """Build event graph nodes and causal edges from collected sources."""
+    from app.tasks.graph_tasks import build_event_graph
+    result = await build_event_graph()
+    return {"status": "completed", "result": result}
+
+
+@router.post("/match-sources")
+async def trigger_matching():
+    """Match news/reddit sources to market questions via GPU sentence embeddings."""
+    from app.tasks.embedding_tasks import match_sources
+    result = await match_sources()
+    return {"status": "completed", "result": result}
+
+
+@router.post("/score-predictions")
+async def trigger_scoring():
+    """Resolve markets and score predictions against actual outcomes."""
+    from app.tasks.scoring_tasks import resolve_and_score
+    result = await resolve_and_score()
+    return {"status": "completed", "result": result}
+
+
+@router.post("/analyze-sentiment")
+async def trigger_sentiment(
+    platform: str | None = None,
+    force: bool = False,
+):
+    """Run batch sentiment analysis on sources using local GPU."""
+    from app.tasks.sentiment_tasks import analyze_sentiment
+    result = await analyze_sentiment(platform=platform, force=force)
+    return {"status": "completed", "result": result}

@@ -11,9 +11,11 @@ from dataclasses import dataclass
 from app.tools.base_rate_tool import BaseRateTool
 from app.tools.base_tool import BasePredictionTool, ToolInput, ToolOutput
 from app.tools.extrapolation import AdvancedExtrapolatorTool
+from app.tools.graph_context import GraphContextTool
 from app.tools.llm_reasoner import LLMReasonerTool
 from app.tools.market_consensus import MarketConsensusTool
 from app.tools.multi_market_ensemble import MultiMarketEnsembleTool
+from app.tools.nli_tool import NLITool
 from app.tools.trend_extrapolator import TrendExtrapolatorTool
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,8 @@ class ToolRegistry:
             AdvancedExtrapolatorTool,
             LLMReasonerTool,
             BaseRateTool,
+            NLITool,
+            GraphContextTool,
         ]:
             tool = tool_class()
             self._tools[tool.name] = tool
@@ -126,12 +130,22 @@ class ToolRegistry:
         return results
 
     def ensemble_prediction(self, results: list[ToolResult]) -> ToolOutput:
-        """Combine multiple tool outputs into a single weighted prediction."""
+        """Combine multiple tool outputs using log-linear pooling with extremization.
+
+        Log-linear pooling is superior to linear averaging for probability
+        forecasts — it properly handles the [0,1] bounded nature of probabilities.
+        Extremization pushes the result away from 0.5 to correct for typical
+        regression-to-the-mean bias in averaged forecasts.
+        """
+        import math
+
         if not results:
             return ToolOutput(probability=0.5, confidence=0.1, reasoning="No tools produced results", signals_used=[])
 
         if len(results) == 1:
-            return results[0].output
+            r = results[0]
+            r.output.metadata["data_signals"] = self._build_data_signals(results, r.output.probability)
+            return r.output
 
         total_weight = sum(r.weight for r in results)
         if total_weight == 0:
@@ -139,7 +153,27 @@ class ToolRegistry:
             for r in results:
                 r.weight = 1.0
 
-        weighted_prob = sum(r.output.probability * r.weight for r in results) / total_weight
+        # Log-linear pooling: geometric mean in log-odds space
+        # This properly handles probabilities near 0 and 1
+        log_odds_sum = 0.0
+        for r in results:
+            p = max(0.01, min(0.99, r.output.probability))  # clamp to avoid log(0)
+            norm_weight = r.weight / total_weight
+            log_odds_sum += norm_weight * math.log(p / (1 - p))
+
+        # Convert back from log-odds to probability
+        weighted_prob = 1.0 / (1.0 + math.exp(-log_odds_sum))
+
+        # Extremize: push away from 0.5 by factor d > 1
+        # d=1.2 is a standard correction from forecasting literature
+        EXTREMIZE_FACTOR = 1.2
+        log_odds = math.log(weighted_prob / (1 - weighted_prob))
+        extremized_odds = log_odds * EXTREMIZE_FACTOR
+        weighted_prob = 1.0 / (1.0 + math.exp(-extremized_odds))
+
+        # Clamp to [0.02, 0.98]
+        weighted_prob = max(0.02, min(0.98, weighted_prob))
+
         max_confidence = max(r.output.confidence for r in results)
 
         # Build reasoning
@@ -150,13 +184,54 @@ class ToolRegistry:
         for r in results:
             all_signals.update(r.output.signals_used)
 
+        data_signals = self._build_data_signals(results, weighted_prob)
+
         return ToolOutput(
             probability=weighted_prob,
             confidence=max_confidence * 0.9,  # Ensemble is slightly more confident
             reasoning=reasoning,
             signals_used=list(all_signals),
-            metadata={"ensemble_size": len(results), "tool_names": [r.tool_name for r in results]},
+            metadata={
+                "ensemble_size": len(results),
+                "tool_names": [r.tool_name for r in results],
+                "data_signals": data_signals,
+            },
         )
+
+    @staticmethod
+    def _build_data_signals(results: list["ToolResult"], ensemble_prob: float) -> dict:
+        """Build structured data_signals from tool results for frontend display."""
+        factors = []
+        for r in results:
+            norm_weight = r.weight / max(sum(rr.weight for rr in results), 1e-9)
+            if r.output.probability >= ensemble_prob:
+                direction = "supports"
+            elif abs(r.output.probability - ensemble_prob) < 0.05:
+                direction = "neutral"
+            else:
+                direction = "contradicts"
+
+            counterfactual = None
+            without = ensemble_prob - (r.output.probability * norm_weight)
+            remaining = 1 - norm_weight
+            if remaining > 0:
+                alt_prob = without / remaining
+                alt_prob = max(0.0, min(1.0, alt_prob))
+                counterfactual = f"Without this signal, probability would shift to ~{alt_prob:.0%}"
+
+            factors.append({
+                "signal": r.output.reasoning[:120] if r.output.reasoning else r.tool_name,
+                "direction": direction,
+                "weight": round(norm_weight, 3),
+                "counterfactual": counterfactual,
+            })
+
+        return {
+            "factors": factors,
+            "sources": [],  # Populated by collectors when source data is available
+            "method": "ensemble",
+            "tools_used": [r.tool_name for r in results],
+        }
 
 
 # Global registry instance

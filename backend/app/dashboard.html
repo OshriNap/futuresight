@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FutureSight</title>
+<style>
+:root {
+  --bg: #0a0a0f; --bg2: #12121a; --bg3: #1a1a25; --border: #2a2a3a;
+  --text: #e0e0e8; --text2: #8888a0; --text3: #555568;
+  --blue: #4a9eff; --purple: #8b5cf6; --cyan: #06b6d4;
+  --green: #10b981; --amber: #f59e0b; --red: #ef4444;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background:var(--bg); color:var(--text); }
+
+/* Layout */
+.shell { display:flex; min-height:100vh; }
+nav { width:200px; background:var(--bg2); border-right:1px solid var(--border); padding:20px 0; flex-shrink:0; position:sticky; top:0; height:100vh; overflow-y:auto; }
+main { flex:1; padding:24px 32px; overflow-y:auto; max-width:1200px; }
+@media(max-width:800px) { nav{display:none} main{padding:16px} }
+
+.logo { padding:0 20px 24px; font-size:18px; font-weight:700; color:var(--blue); }
+.logo span { color:var(--text2); font-weight:400; font-size:11px; display:block; margin-top:2px; }
+.nav-item { display:block; padding:10px 20px; color:var(--text2); text-decoration:none; cursor:pointer; border-left:3px solid transparent; font-size:13px; }
+.nav-item:hover,.nav-item.active { color:var(--text); background:var(--bg3); border-left-color:var(--blue); }
+
+/* Cards */
+.card { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:16px; }
+.card h3 { font-size:13px; color:var(--text2); margin-bottom:12px; text-transform:uppercase; letter-spacing:0.5px; }
+
+/* Stats */
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px; }
+.stat { text-align:center; padding:16px; }
+.stat .value { font-size:26px; font-weight:700; color:var(--blue); }
+.stat .label { font-size:11px; color:var(--text2); margin-top:4px; }
+
+/* Grid */
+.grid-2 { display:grid; grid-template-columns:2fr 1fr; gap:16px; }
+@media(max-width:900px) { .grid-2{grid-template-columns:1fr} }
+
+/* Bars */
+.bar-row { display:flex; align-items:center; margin-bottom:8px; font-size:12px; }
+.bar-row .name { width:80px; color:var(--text2); }
+.bar-bg { flex:1; height:6px; background:var(--bg); border-radius:3px; margin:0 8px; }
+.bar-fill { height:100%; border-radius:3px; transition:width 0.4s; }
+.bar-row .count { width:40px; text-align:right; color:var(--text2); font-size:11px; }
+
+/* Market cards */
+.market { padding:14px 0; border-bottom:1px solid var(--border); display:flex; gap:16px; align-items:flex-start; }
+.market:last-child { border-bottom:none; }
+.market-prob { min-width:64px; text-align:center; flex-shrink:0; }
+.market-prob .pct { font-size:22px; font-weight:700; line-height:1; }
+.market-prob .dir { font-size:10px; margin-top:2px; }
+.market-body { flex:1; min-width:0; }
+.market-title { font-size:14px; font-weight:500; line-height:1.3; margin-bottom:4px; }
+.market-desc { font-size:12px; color:var(--text2); line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-bottom:6px; }
+.market-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+/* Outcomes */
+.outcomes { display:flex; gap:4px; margin-top:6px; }
+.outcome { font-size:11px; padding:2px 8px; border-radius:4px; background:var(--bg3); }
+.outcome-yes { color:var(--green); }
+.outcome-no { color:var(--red); }
+
+/* Badges */
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:500; }
+.b-blue { background:rgba(74,158,255,0.12); color:var(--blue); }
+.b-purple { background:rgba(139,92,246,0.12); color:var(--purple); }
+.b-green { background:rgba(16,185,129,0.12); color:var(--green); }
+.b-amber { background:rgba(245,158,11,0.12); color:var(--amber); }
+.b-red { background:rgba(239,68,68,0.12); color:var(--red); }
+.b-cyan { background:rgba(6,182,212,0.12); color:var(--cyan); }
+
+/* Buttons */
+.btn { padding:6px 12px; border:1px solid var(--border); background:var(--bg3); color:var(--text); border-radius:6px; cursor:pointer; font-size:11px; }
+.btn:hover { border-color:var(--blue); }
+.btn-p { background:var(--blue); border-color:var(--blue); color:#fff; }
+.actions { display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; }
+
+/* Filter */
+.filter-bar { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center; }
+.filter-bar input { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:6px; font-size:12px; width:200px; }
+.filter-bar select { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:6px 8px; border-radius:6px; font-size:12px; }
+
+/* Table */
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th { text-align:left; padding:8px; color:var(--text2); border-bottom:1px solid var(--border); font-weight:500; }
+td { padding:8px; border-bottom:1px solid var(--border); }
+tr:hover { background:var(--bg3); }
+
+/* Run cards */
+.run { padding:10px 0; border-bottom:1px solid var(--border); }
+.run:last-child { border-bottom:none; }
+
+/* Dot */
+.dot { width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:5px; }
+
+/* Expand */
+.expandable { cursor:pointer; }
+.expand-content { display:none; margin-top:8px; padding:10px; background:var(--bg); border-radius:6px; font-size:12px; line-height:1.6; color:var(--text2); }
+.expand-content.open { display:block; }
+
+/* Scroll */
+.scroll { max-height:600px; overflow-y:auto; }
+
+/* Prob color */
+.prob-high { color:var(--green); }
+.prob-mid { color:var(--amber); }
+.prob-low { color:var(--red); }
+.prob-neutral { color:var(--text2); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav>
+    <div class="logo">FutureSight<span>prediction platform</span></div>
+    <a class="nav-item active" data-tab="overview" onclick="showTab('overview')">Overview</a>
+    <a class="nav-item" data-tab="predictions" onclick="showTab('predictions')">Predictions</a>
+    <a class="nav-item" data-tab="markets" onclick="showTab('markets')">Markets</a>
+    <a class="nav-item" data-tab="news" onclick="showTab('news')">News & Social</a>
+    <a class="nav-item" data-tab="methods" onclick="showTab('methods')">Methods</a>
+    <a class="nav-item" data-tab="graph" onclick="showTab('graph')">Event Graph</a>
+    <a class="nav-item" data-tab="interests" onclick="showTab('interests')">Interests</a>
+    <a class="nav-item" data-tab="agents" onclick="showTab('agents')">Agent Runs</a>
+    <a class="nav-item" data-tab="scratchpad" onclick="showTab('scratchpad')">Scratchpad</a>
+  </nav>
+  <main>
+    <div id="tab-overview" class="tab-content"></div>
+    <div id="tab-predictions" class="tab-content" style="display:none"></div>
+    <div id="tab-markets" class="tab-content" style="display:none"></div>
+    <div id="tab-news" class="tab-content" style="display:none"></div>
+    <div id="tab-methods" class="tab-content" style="display:none"></div>
+    <div id="tab-graph" class="tab-content" style="display:none"></div>
+    <div id="tab-interests" class="tab-content" style="display:none"></div>
+    <div id="tab-agents" class="tab-content" style="display:none"></div>
+    <div id="tab-scratchpad" class="tab-content" style="display:none"></div>
+  </main>
+</div>
+
+<script>
+const API = '';
+
+async function api(path) { return (await fetch(API + path)).json(); }
+async function post(path) { return (await fetch(API + path, {method:'POST'})).json(); }
+
+function showTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  document.getElementById('tab-' + name).style.display = 'block';
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
+  loaders[name]?.();
+}
+
+// Helpers
+const pct = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+const num = v => v != null ? v.toLocaleString() : '—';
+const score = v => v != null ? v.toFixed(3) : '—';
+function ago(dt) {
+  if (!dt) return '—';
+  const s = Math.floor((Date.now() - new Date(dt)) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function daysLeft(dt) {
+  if (!dt) return '';
+  const d = Math.ceil((new Date(dt) - Date.now()) / 86400000);
+  if (d < 0) return 'expired';
+  if (d === 0) return 'today';
+  if (d === 1) return 'tomorrow';
+  return d + 'd left';
+}
+function probColor(p) {
+  if (p == null) return 'prob-neutral';
+  if (p >= 0.7) return 'prob-high';
+  if (p >= 0.3) return 'prob-mid';
+  return 'prob-low';
+}
+function platformBadge(p) {
+  const c = {polymarket:'b-purple', manifold:'b-green', gdelt:'b-cyan', reddit:'b-amber'}[p] || 'b-blue';
+  return `<span class="badge ${c}">${p}</span>`;
+}
+function barClass(p) {
+  return {polymarket:'var(--purple)', manifold:'var(--green)', gdelt:'var(--cyan)', reddit:'var(--amber)'}[p] || 'var(--text2)';
+}
+
+function parseOutcomes(raw) {
+  if (!raw) return [];
+  let outcomes = raw.outcomes || [];
+  let prices = raw.outcomePrices || [];
+  if (typeof outcomes === 'string') try { outcomes = JSON.parse(outcomes); } catch(e) { outcomes = []; }
+  if (typeof prices === 'string') try { prices = JSON.parse(prices); } catch(e) { prices = []; }
+  return outcomes.map((o, i) => ({
+    label: o,
+    price: prices[i] ? parseFloat(prices[i]) : null
+  }));
+}
+
+function renderMarket(s) {
+  const p = s.current_market_probability;
+  const outcomes = parseOutcomes(s.raw_data);
+  const vol = s.raw_data?.volumeNum;
+  const liq = s.raw_data?.liquidityNum;
+
+  const outcomesHtml = outcomes.length ? `<div class="outcomes">${outcomes.map((o, i) =>
+    `<span class="outcome ${i === 0 ? 'outcome-yes' : 'outcome-no'}">${o.label}: ${o.price != null ? (o.price * 100).toFixed(1) + '%' : '?'}</span>`
+  ).join('')}</div>` : '';
+
+  const desc = s.description || s.raw_data?.description || '';
+
+  return `
+    <div class="market expandable" onclick="this.querySelector('.expand-content')?.classList.toggle('open')">
+      <div class="market-prob">
+        <div class="pct ${probColor(p)}">${p != null ? (p*100).toFixed(0) : '?'}<span style="font-size:12px">%</span></div>
+        <div class="dir">${daysLeft(s.resolution_date || s.raw_data?.endDate)}</div>
+      </div>
+      <div class="market-body">
+        <div class="market-title">${s.title}</div>
+        ${outcomesHtml}
+        <div class="market-meta">
+          ${platformBadge(s.platform)}
+          ${s.category ? `<span class="badge b-blue">${s.category}</span>` : ''}
+          ${vol ? `<span style="font-size:10px;color:var(--text3)">Vol: $${vol >= 1000 ? (vol/1000).toFixed(1)+'k' : vol.toFixed(0)}</span>` : ''}
+          ${liq ? `<span style="font-size:10px;color:var(--text3)">Liq: $${liq >= 1000 ? (liq/1000).toFixed(1)+'k' : liq.toFixed(0)}</span>` : ''}
+          <span style="font-size:10px;color:var(--text3)">${ago(s.updated_at)}</span>
+        </div>
+        ${desc ? `<div class="expand-content"><strong>Description:</strong><br>${desc}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function sentimentBadge(raw) {
+  if (!raw || raw.sentiment == null) return '';
+  const s = raw.sentiment;
+  const label = raw.sentiment_label || 'neutral';
+  const cls = label === 'positive' ? 'b-green' : label === 'negative' ? 'b-red' : 'b-blue';
+  return `<span class="badge ${cls}">${s > 0 ? '+' : ''}${s.toFixed(2)} ${label}</span>`;
+}
+
+function renderNewsItem(s) {
+  const desc = s.description || s.raw_data?.description || '';
+  return `
+    <div class="market expandable" onclick="this.querySelector('.expand-content')?.classList.toggle('open')">
+      <div class="market-body" style="padding-left:0">
+        <div class="market-title">${s.title}</div>
+        ${desc ? `<div class="market-desc">${desc}</div>` : ''}
+        <div class="market-meta">
+          ${platformBadge(s.platform)}
+          ${sentimentBadge(s.raw_data)}
+          ${s.category ? `<span class="badge b-blue">${s.category}</span>` : ''}
+          <span style="font-size:10px;color:var(--text3)">${ago(s.updated_at)}</span>
+        </div>
+        ${s.raw_data?.url ? `<div class="expand-content"><a href="${s.raw_data.url}" target="_blank" style="color:var(--blue)">${s.raw_data.url}</a><br><br>${desc}</div>` : (desc ? `<div class="expand-content">${desc}</div>` : '')}
+      </div>
+    </div>`;
+}
+
+// ── Loaders ──
+const loaders = {};
+
+loaders.overview = async () => {
+  const [stats, dashStats, reliability, topMarkets, recentNews, predictions, sentiment] = await Promise.all([
+    api('/api/meta/stats'),
+    api('/api/dashboard/stats'),
+    api('/api/meta/sources/reliability'),
+    api('/api/dashboard/sources?platform=polymarket&has_probability=true&limit=8'),
+    api('/api/dashboard/sources?platform=gdelt&limit=5'),
+    api('/api/predictions/?limit=5'),
+    api('/api/dashboard/sentiment'),
+  ]);
+  const platforms = stats.platforms || {};
+  const maxP = Math.max(...Object.values(platforms), 1);
+
+  const bars = Object.entries(platforms).map(([p, c]) =>
+    `<div class="bar-row"><span class="name">${p}</span><div class="bar-bg"><div class="bar-fill" style="width:${c/maxP*100}%;background:${barClass(p)}"></div></div><span class="count">${c}</span></div>`
+  ).join('');
+
+  const relBars = reliability.map(r =>
+    `<div class="bar-row"><span class="name">${r.platform}</span><div class="bar-bg"><div class="bar-fill" style="width:${r.reliability_score*100}%;background:${r.reliability_score>=0.7?'var(--green)':r.reliability_score>=0.4?'var(--amber)':'var(--red)'}"></div></div><span class="count">${pct(r.reliability_score)}</span></div>`
+  ).join('') || '<div style="color:var(--text3);font-size:12px">No data yet</div>';
+
+  document.getElementById('tab-overview').innerHTML = `
+    <h2 style="margin-bottom:4px">Dashboard</h2>
+    <p style="color:var(--text2);margin-bottom:16px;font-size:13px">Aggregating prediction markets, news, and social data to forecast future events.</p>
+
+    <div class="stats">
+      <div class="card stat"><div class="value">${num(stats.total_sources)}</div><div class="label">Data Sources</div></div>
+      <div class="card stat"><div class="value">${num(stats.total_predictions)}</div><div class="label">Predictions</div></div>
+      <div class="card stat"><div class="value">${num(stats.scored_predictions)}</div><div class="label">Scored</div></div>
+      <div class="card stat"><div class="value">${score(stats.avg_brier_score)}</div><div class="label">Avg Brier</div></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-p" onclick="doAction(this,'collect','all')">Collect All</button>
+      <button class="btn" onclick="doAction(this,'collect','polymarket')">Polymarket</button>
+      <button class="btn" onclick="doAction(this,'collect','manifold')">Manifold</button>
+      <button class="btn" onclick="doAction(this,'collect','gdelt')">GDELT</button>
+      <button class="btn" onclick="doAction(this,'collect','reddit')">Reddit</button>
+      <button class="btn btn-p" onclick="doAction(this,'generate-predictions','')">Generate Predictions</button>
+      <button class="btn btn-p" onclick="doAction(this,'build-graph','')">Build Graph</button>
+      <button class="btn btn-p" onclick="doAction(this,'analyze-sentiment','')">Analyze Sentiment</button>
+      <button class="btn btn-p" onclick="doAction(this,'match-sources','')">Match Sources</button>
+      <button class="btn btn-p" onclick="doAction(this,'score-predictions','')">Score Predictions</button>
+      <button class="btn" onclick="doAction(this,'trigger','source_evaluator')">Evaluate Sources</button>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <div class="card">
+          <h3>Top Markets</h3>
+          <div class="scroll" style="max-height:450px">
+            ${topMarkets.map(renderMarket).join('') || '<div style="color:var(--text3)">No markets yet — click Collect</div>'}
+          </div>
+        </div>
+        <div class="card">
+          <h3>Recent News</h3>
+          ${recentNews.map(renderNewsItem).join('') || '<div style="color:var(--text3)">No news yet</div>'}
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>Latest Predictions</h3>
+          ${predictions.length ? predictions.map(p => `
+            <div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+              <div class="pct ${probColor(p.confidence)}" style="font-size:16px;font-weight:700;min-width:45px;text-align:center">${(p.confidence*100).toFixed(0)}%</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.prediction_text}</div>
+                <div style="font-size:10px;color:var(--text3)"><span class="badge b-${p.time_horizon==='short'?'red':p.time_horizon==='long'?'purple':'amber'}" style="font-size:9px">${p.time_horizon}</span> ${ago(p.created_at)}</div>
+              </div>
+            </div>
+          `).join('') : '<div style="color:var(--text3);font-size:12px">No predictions yet</div>'}
+        </div>
+        <div class="card">
+          <h3>Sources by Platform</h3>
+          ${bars}
+        </div>
+        <div class="card">
+          <h3>Source Reliability</h3>
+          ${relBars}
+        </div>
+        <div class="card">
+          <h3>Sentiment Analysis</h3>
+          ${sentiment.total_scored > 0 ? `
+            <div style="font-size:24px;font-weight:700;color:${sentiment.avg_sentiment > 0.05 ? 'var(--green)' : sentiment.avg_sentiment < -0.05 ? 'var(--red)' : 'var(--text2)'};margin-bottom:8px">
+              ${sentiment.avg_sentiment > 0 ? '+' : ''}${sentiment.avg_sentiment?.toFixed(3) || '0.000'}
+              <span style="font-size:11px;font-weight:400;color:var(--text2)">avg sentiment</span>
+            </div>
+            <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${sentiment.total_scored}/${sentiment.total_sources} sources scored (${sentiment.coverage_pct}%)</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${Object.entries(sentiment.by_label || {}).map(([label, count]) => {
+                const cls = label === 'positive' ? 'b-green' : label === 'negative' ? 'b-red' : 'b-blue';
+                return \`<span class="badge \${cls}">\${label}: \${count}</span>\`;
+              }).join('')}
+            </div>
+          ` : '<div style="color:var(--text3);font-size:12px">No sentiment data yet</div>'}
+        </div>
+        <div class="card">
+          <h3>System</h3>
+          <div style="font-size:12px;color:var(--text2);line-height:2.2">
+            <div><span class="dot" style="background:var(--green)"></span>Agents: ${num(dashStats.total_agents)}</div>
+            <div><span class="dot" style="background:var(--green)"></span>Event Nodes: ${num(dashStats.total_event_nodes)}</div>
+            <div><span class="dot" style="background:var(--green)"></span>Event Edges: ${num(dashStats.total_event_edges)}</div>
+            <div><span class="dot" style="background:var(--cyan)"></span>Predictions: ${num(dashStats.total_predictions)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+// ── Predictions ──
+loaders.predictions = async () => {
+  const preds = await api('/api/predictions/?limit=100');
+  // Sort by confidence desc
+  preds.sort((a,b) => b.confidence - a.confidence);
+
+  const el = document.getElementById('tab-predictions');
+  el.innerHTML = `
+    <h2 style="margin-bottom:16px">Predictions</h2>
+    <div class="filter-bar">
+      <input id="pred-search" placeholder="Search predictions..." oninput="filterPredictions()">
+      <select id="pred-horizon" onchange="filterPredictions()">
+        <option value="">All horizons</option>
+        <option value="short">Short-term</option>
+        <option value="medium">Medium-term</option>
+        <option value="long">Long-term</option>
+      </select>
+      <button class="btn btn-p" onclick="doAction(this,'generate-predictions','').then(()=>loaders.predictions())">Regenerate</button>
+    </div>
+    <div class="card"><div id="pred-list" class="scroll" style="max-height:700px">${renderPredictions(preds)}</div></div>
+  `;
+  window._allPreds = preds;
+};
+
+function renderPredictions(preds) {
+  if (!preds.length) return '<div style="color:var(--text3);padding:20px">No predictions yet. Click "Generate Predictions" on the Overview tab.</div>';
+  return preds.map(p => {
+    const ds = p.data_signals || {};
+    const factors = ds.factors || [];
+    const sources = ds.sources || [];
+    const tools = ds.tools_used || [];
+
+    const factorsHtml = factors.map(f => {
+      const icon = f.direction === 'supports' ? '&#9650;' : f.direction === 'contradicts' ? '&#9660;' : '&#9644;';
+      const color = f.direction === 'supports' ? 'var(--green)' : f.direction === 'contradicts' ? 'var(--red)' : 'var(--text2)';
+      return `<div style="margin-bottom:6px">
+        <span style="color:${color}">${icon}</span>
+        <span style="font-size:12px">${f.signal}</span>
+        <span style="font-size:10px;color:var(--text3);margin-left:6px">weight: ${(f.weight*100).toFixed(0)}%</span>
+        ${f.counterfactual ? `<div style="font-size:11px;color:var(--text3);font-style:italic;margin-left:16px">${f.counterfactual}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    const sourcesHtml = sources.map(s => `
+      <div style="font-size:12px;margin-bottom:4px">
+        <span style="font-weight:500">${s.name}</span>
+        ${platformBadge(s.platform)}
+        <span style="color:var(--text3);font-size:11px">${s.signal}</span>
+      </div>
+    `).join('');
+
+    const toolsHtml = tools.map(t => `<span class="badge b-blue" style="margin-right:3px">${t.replace(/_/g,' ')}</span>`).join('');
+
+    return `
+      <div class="market expandable" onclick="this.querySelector('.expand-content')?.classList.toggle('open')">
+        <div class="market-prob">
+          <div class="pct ${probColor(p.confidence)}">${(p.confidence*100).toFixed(0)}<span style="font-size:12px">%</span></div>
+          <div class="dir">${p.predicted_outcome || ''}</div>
+        </div>
+        <div class="market-body">
+          <div class="market-title">${p.prediction_text}</div>
+          <div class="market-meta">
+            <span class="badge b-${p.time_horizon==='short'?'red':p.time_horizon==='long'?'purple':'amber'}">${p.time_horizon}-term</span>
+            ${toolsHtml}
+            <span style="font-size:10px;color:var(--text3)">${ago(p.created_at)}</span>
+          </div>
+          <div class="expand-content">
+            ${p.reasoning ? `<div style="margin-bottom:10px"><strong>Reasoning:</strong><br>${p.reasoning}</div>` : ''}
+            ${factorsHtml ? `<div style="margin-bottom:10px"><strong>Key Factors:</strong><br>${factorsHtml}</div>` : ''}
+            ${sourcesHtml ? `<div style="margin-bottom:10px"><strong>Sources:</strong><br>${sourcesHtml}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function filterPredictions() {
+  const q = (document.getElementById('pred-search')?.value || '').toLowerCase();
+  const h = document.getElementById('pred-horizon')?.value || '';
+  let filtered = window._allPreds || [];
+  if (q) filtered = filtered.filter(p => p.prediction_text.toLowerCase().includes(q));
+  if (h) filtered = filtered.filter(p => p.time_horizon === h);
+  document.getElementById('pred-list').innerHTML = renderPredictions(filtered);
+}
+
+// ── Markets ──
+loaders.markets = async () => {
+  const el = document.getElementById('tab-markets');
+  el.innerHTML = `
+    <h2 style="margin-bottom:16px">Prediction Markets</h2>
+    <div class="filter-bar">
+      <input id="market-search" placeholder="Search markets..." oninput="loadMarkets()">
+      <button class="btn btn-p" onclick="doAction(this,'collect','polymarket').then(loadMarkets)">Refresh</button>
+    </div>
+    <div class="card"><div id="market-list" class="scroll" style="max-height:700px">Loading...</div></div>
+  `;
+  loadMarkets();
+};
+
+async function loadMarkets() {
+  const q = document.getElementById('market-search')?.value || '';
+  const params = new URLSearchParams({platform:'polymarket', has_probability:'true', limit:'100'});
+  if (q) params.set('search', q);
+  const sources = await api('/api/dashboard/sources?' + params);
+  // Sort by probability descending
+  sources.sort((a,b) => (b.current_market_probability||0) - (a.current_market_probability||0));
+  document.getElementById('market-list').innerHTML =
+    sources.map(renderMarket).join('') || '<div style="color:var(--text3);padding:20px">No markets found</div>';
+}
+
+// ── News ──
+loaders.news = async () => {
+  const el = document.getElementById('tab-news');
+  el.innerHTML = `
+    <h2 style="margin-bottom:16px">News & Social</h2>
+    <div class="filter-bar">
+      <input id="news-search" placeholder="Search..." oninput="loadNews()">
+      <select id="news-platform" onchange="loadNews()">
+        <option value="">All platforms</option>
+        <option value="gdelt">GDELT</option>
+        <option value="reddit">Reddit</option>
+      </select>
+      <button class="btn" onclick="doAction(this,'collect','gdelt').then(loadNews)">GDELT</button>
+      <button class="btn" onclick="doAction(this,'collect','reddit').then(loadNews)">Reddit</button>
+    </div>
+    <div class="card"><div id="news-list" class="scroll" style="max-height:700px">Loading...</div></div>
+  `;
+  loadNews();
+};
+
+async function loadNews() {
+  const q = document.getElementById('news-search')?.value || '';
+  const p = document.getElementById('news-platform')?.value || '';
+  const params = new URLSearchParams({limit:'100'});
+  if (p) params.set('platform', p); else params.set('platform', 'gdelt'); // default to gdelt
+  if (q) params.set('search', q);
+  let sources = await api('/api/dashboard/sources?' + params);
+  if (!p) {
+    const reddit = await api('/api/dashboard/sources?platform=reddit&limit=100' + (q ? '&search='+q : ''));
+    sources = sources.concat(reddit);
+    sources.sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at));
+  }
+  document.getElementById('news-list').innerHTML =
+    sources.map(renderNewsItem).join('') || '<div style="color:var(--text3);padding:20px">No articles found</div>';
+}
+
+// ── Methods ──
+loaders.methods = async () => {
+  const methods = await api('/api/meta/methods');
+  const typeColor = {heuristic:'b-amber',statistical:'b-blue',ensemble:'b-purple',ml_model:'b-cyan',llm_reasoning:'b-green'};
+  document.getElementById('tab-methods').innerHTML = `
+    <h2 style="margin-bottom:16px">Prediction Methods</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>Method</th><th>Type</th><th>Description</th><th>Status</th><th>Accuracy</th><th>Uses</th></tr></thead>
+        <tbody>${methods.map(m => `
+          <tr>
+            <td><strong>${m.name.replace(/_/g,' ')}</strong></td>
+            <td><span class="badge ${typeColor[m.method_type]||'b-blue'}">${m.method_type}</span></td>
+            <td style="max-width:300px;color:var(--text2)">${m.description}</td>
+            <td>${m.is_active ? '<span class="dot" style="background:var(--green)"></span>Active' : 'Off'}</td>
+            <td>${score(m.avg_accuracy)}</td>
+            <td>${m.total_uses}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  `;
+};
+
+// ── Event Graph ──
+loaders.graph = async () => {
+  const data = await api('/api/graph/');
+  const nodes = data.nodes || [];
+  const edges = data.edges || [];
+
+  // Build node map
+  const nodeMap = {};
+  nodes.forEach(n => nodeMap[n.id] = n);
+
+  const typeColor = {geopolitical:'var(--red)',economic:'var(--amber)',tech:'var(--cyan)',social:'var(--purple)',environmental:'var(--green)'};
+
+  // SVG force-directed graph
+  const W = 800, H = 500;
+
+  // Position nodes in a circle if we have them, or show empty state
+  let graphHtml = '';
+  if (nodes.length === 0) {
+    graphHtml = `<div style="color:var(--text3);padding:40px;text-align:center">
+      <div style="font-size:48px;margin-bottom:12px">&#x1f578;</div>
+      <div>No event nodes yet. Events will be added as the system collects and analyzes data.</div>
+    </div>`;
+  } else {
+    // Position nodes
+    const positions = {};
+    nodes.forEach((n, i) => {
+      const angle = (2 * Math.PI * i) / nodes.length;
+      const r = Math.min(W, H) * 0.35;
+      positions[n.id] = { x: W/2 + r * Math.cos(angle), y: H/2 + r * Math.sin(angle) };
+    });
+
+    const edgeLines = edges.map(e => {
+      const s = positions[e.source_node_id], t = positions[e.target_node_id];
+      if (!s || !t) return '';
+      const opacity = 0.2 + e.strength * 0.6;
+      return `<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="var(--cyan)" stroke-opacity="${opacity}" stroke-width="${1 + e.strength * 2}"/>`;
+    }).join('');
+
+    const nodeCircles = nodes.map(n => {
+      const p = positions[n.id];
+      const col = typeColor[n.event_type] || 'var(--blue)';
+      const r = 6 + (n.confidence || 0.5) * 8;
+      return `<g>
+        <circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${col}" fill-opacity="0.7" stroke="${col}" stroke-width="1.5"/>
+        <title>${n.title} (${n.event_type}, ${n.status})</title>
+      </g>`;
+    }).join('');
+
+    graphHtml = `<svg width="100%" viewBox="0 0 ${W} ${H}" style="background:var(--bg);border-radius:8px">${edgeLines}${nodeCircles}</svg>`;
+  }
+
+  // Legend
+  const legend = Object.entries(typeColor).map(([t,c]) =>
+    `<span style="margin-right:12px"><span class="dot" style="background:${c}"></span>${t}</span>`
+  ).join('');
+
+  // Edge relationship table
+  const edgeRows = edges.slice(0, 20).map(e => {
+    const src = nodeMap[e.source_node_id];
+    const tgt = nodeMap[e.target_node_id];
+    const relColor = {causes:'b-red',correlates:'b-blue',precedes:'b-amber',amplifies:'b-purple',mitigates:'b-green'}[e.relationship_type] || 'b-blue';
+    return `<tr>
+      <td style="max-width:200px">${src?.title || '?'}</td>
+      <td><span class="badge ${relColor}">${e.relationship_type}</span></td>
+      <td style="max-width:200px">${tgt?.title || '?'}</td>
+      <td>${(e.strength * 100).toFixed(0)}%</td>
+      <td style="color:var(--text2);font-size:11px">${e.reasoning || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('tab-graph').innerHTML = `
+    <h2 style="margin-bottom:16px">Event Causality Graph</h2>
+    <div class="stats">
+      <div class="card stat"><div class="value">${nodes.length}</div><div class="label">Nodes</div></div>
+      <div class="card stat"><div class="value">${edges.length}</div><div class="label">Edges</div></div>
+      <div class="card stat"><div class="value">${new Set(nodes.map(n=>n.event_type)).size}</div><div class="label">Event Types</div></div>
+      <div class="card stat"><div class="value">${new Set(edges.map(e=>e.relationship_type)).size}</div><div class="label">Rel. Types</div></div>
+    </div>
+    <div class="card">
+      <h3>Graph</h3>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${legend}</div>
+      ${graphHtml}
+    </div>
+    ${edgeRows ? `<div class="card"><h3>Causal Relationships</h3>
+      <table><thead><tr><th>Source Event</th><th>Relationship</th><th>Target Event</th><th>Strength</th><th>Reasoning</th></tr></thead>
+      <tbody>${edgeRows}</tbody></table>
+    </div>` : ''}
+    <div class="card">
+      <h3>Node Details</h3>
+      <div class="scroll" style="max-height:400px">
+        ${nodes.map(n => `
+          <div class="run">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <span class="dot" style="background:${typeColor[n.event_type]||'var(--blue)'}"></span>
+                <strong style="font-size:13px">${n.title}</strong>
+              </div>
+              <div>
+                <span class="badge b-blue">${n.event_type}</span>
+                <span class="badge ${n.status==='active'?'b-green':n.status==='resolved'?'b-amber':'b-red'}">${n.status}</span>
+              </div>
+            </div>
+            ${n.description ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${n.description}</div>` : ''}
+            <div style="font-size:10px;color:var(--text3);margin-top:4px">
+              ${n.confidence != null ? `Confidence: ${pct(n.confidence)}` : ''}
+              ${n.occurred_at ? ` · Occurred: ${ago(n.occurred_at)}` : ''}
+            </div>
+          </div>
+        `).join('') || '<div style="color:var(--text3);padding:20px">No events yet</div>'}
+      </div>
+    </div>
+  `;
+};
+
+// ── Interests ──
+loaders.interests = async () => {
+  const interests = await api('/api/interests/');
+  const priColor = {high:'b-red',medium:'b-amber',low:'b-blue'};
+
+  const listHtml = interests.map(i => `
+    <div class="run" style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div>
+        <div style="font-weight:600;font-size:14px;margin-bottom:4px">${i.name}</div>
+        ${i.description ? `<div style="font-size:12px;color:var(--text2);margin-bottom:4px">${i.description}</div>` : ''}
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">
+          <span class="badge ${priColor[i.priority]||'b-blue'}">${i.priority}</span>
+          ${i.category ? `<span class="badge b-cyan">${i.category}</span>` : ''}
+          ${i.notification_enabled ? '<span class="badge b-green">notifications on</span>' : ''}
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${(i.keywords||[]).map(k => `<span class="badge b-blue">${k}</span>`).join('')}
+        </div>
+      </div>
+      <button class="btn" style="flex-shrink:0;color:var(--red);border-color:var(--red)" onclick="deleteInterest('${i.id}')">Delete</button>
+    </div>
+  `).join('');
+
+  document.getElementById('tab-interests').innerHTML = `
+    <h2 style="margin-bottom:16px">Interests</h2>
+
+    <div class="card">
+      <h3>Add Interest</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <label style="font-size:11px;color:var(--text2)">Name</label>
+          <input id="int-name" class="filter-input" placeholder="e.g. AI regulation" style="display:block;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;width:180px;margin-top:2px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2)">Category</label>
+          <input id="int-cat" class="filter-input" placeholder="e.g. technology" style="display:block;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;width:140px;margin-top:2px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2)">Keywords (comma-separated)</label>
+          <input id="int-kw" class="filter-input" placeholder="e.g. AI, regulation, policy" style="display:block;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;width:240px;margin-top:2px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2)">Priority</label>
+          <select id="int-pri" style="display:block;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:6px;font-size:12px;margin-top:2px">
+            <option value="high">High</option>
+            <option value="medium" selected>Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+        <button class="btn btn-p" onclick="addInterest()" style="margin-bottom:1px">Add</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Your Interests (${interests.length})</h3>
+      <div class="scroll" style="max-height:500px">
+        ${listHtml || '<div style="color:var(--text3);padding:20px">No interests yet. Add topics you want to track.</div>'}
+      </div>
+    </div>
+  `;
+};
+
+async function addInterest() {
+  const name = document.getElementById('int-name').value.trim();
+  const cat = document.getElementById('int-cat').value.trim();
+  const kw = document.getElementById('int-kw').value.split(',').map(k => k.trim()).filter(Boolean);
+  const pri = document.getElementById('int-pri').value;
+  if (!name || !kw.length) return alert('Name and at least one keyword required');
+  await fetch('/api/interests/', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name, category: cat || null, keywords: kw, priority: pri})
+  });
+  loaders.interests();
+}
+
+async function deleteInterest(id) {
+  await fetch('/api/interests/' + id, {method:'DELETE'});
+  loaders.interests();
+}
+
+// ── Agent Runs ──
+loaders.agents = async () => {
+  const runs = await api('/api/meta/runs?limit=50');
+  document.getElementById('tab-agents').innerHTML = `
+    <h2 style="margin-bottom:16px">Agent Runs</h2>
+    <div class="actions">
+      <button class="btn" onclick="doAction(this,'trigger','source_evaluator')">Source Evaluator</button>
+      <button class="btn" onclick="doAction(this,'trigger','strategy_optimizer')">Strategy Optimizer</button>
+      <button class="btn" onclick="doAction(this,'trigger','method_researcher')">Method Researcher</button>
+    </div>
+    <div class="card scroll">${runs.map(r => `
+      <div class="run">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <span class="badge b-purple">${r.agent_type}</span>
+            <span class="badge b-blue">${r.trigger}</span>
+            ${r.duration_seconds ? `<span style="font-size:10px;color:var(--text3);margin-left:6px">${r.duration_seconds.toFixed(2)}s</span>` : ''}
+          </div>
+          <span style="font-size:10px;color:var(--text3)">${ago(r.created_at)}</span>
+        </div>
+        <div style="font-size:13px;margin-top:6px">${r.output_summary}</div>
+        ${r.actions_taken?.length ? `<div style="margin-top:4px;font-size:10px;color:var(--text3)">${r.actions_taken.join(' · ')}</div>` : ''}
+      </div>
+    `).join('') || '<div style="color:var(--text3);padding:20px">No runs yet</div>'}</div>
+  `;
+};
+
+// ── Scratchpad ──
+loaders.scratchpad = async () => {
+  const entries = await api('/api/meta/scratchpad');
+  const catColor = {insight:'b-blue',idea:'b-green',failure:'b-red',success:'b-green',todo:'b-amber'};
+  const priColor = {high:'b-red',medium:'b-amber',low:'b-blue'};
+  document.getElementById('tab-scratchpad').innerHTML = `
+    <h2 style="margin-bottom:16px">Scratchpad</h2>
+    <div class="card scroll">${entries.map(e => `
+      <div class="run">
+        <div style="display:flex;justify-content:space-between">
+          <div>
+            <span class="badge b-purple">${e.agent_type}</span>
+            <span class="badge ${catColor[e.category]||'b-blue'}">${e.category}</span>
+            <span class="badge ${priColor[e.priority]||'b-blue'}">${e.priority}</span>
+          </div>
+          <span style="font-size:10px;color:var(--text3)">${ago(e.created_at)}</span>
+        </div>
+        <div style="font-weight:600;margin-top:6px;font-size:14px">${e.title}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:4px;line-height:1.5">${e.content}</div>
+        ${e.tags?.length ? `<div style="margin-top:4px">${e.tags.map(t => `<span class="badge b-blue" style="margin-right:3px">${t}</span>`).join('')}</div>` : ''}
+      </div>
+    `).join('') || '<div style="color:var(--text3);padding:20px">No entries yet. Scheduled tasks will populate this.</div>'}</div>
+  `;
+};
+
+// ── Actions ──
+async function doAction(btn, type, name) {
+  const orig = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    let path;
+    if (type === 'collect') path = `/api/meta/collect/${name}`;
+    else if (type === 'trigger') path = `/api/meta/trigger/${name}`;
+    else path = `/api/meta/${type}`;
+    await post(path);
+    btn.textContent = 'Done';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1200);
+    if (document.querySelector('.nav-item.active')?.dataset.tab === 'overview') loaders.overview();
+  } catch(e) {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+  }
+}
+
+// Init
+loaders.overview();
+</script>
+</body>
+</html>

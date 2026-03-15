@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 
-KEYWORDS = [
+DEFAULT_KEYWORDS = [
     "prediction",
     "forecast",
     "geopolitics",
@@ -20,6 +20,24 @@ KEYWORDS = [
     "technology",
     "climate",
 ]
+
+
+async def _get_interest_keywords() -> list[str]:
+    """Pull keywords from user interests in the database."""
+    try:
+        from sqlalchemy import select
+        from app.database import async_session
+        from app.models.user_interest import UserInterest
+
+        async with async_session() as db:
+            result = await db.execute(select(UserInterest))
+            interests = result.scalars().all()
+            kws = []
+            for interest in interests:
+                kws.extend(interest.keywords or [])
+            return kws
+    except Exception:
+        return []
 
 # Map GDELT themes to categories
 THEME_CATEGORY_MAP = {
@@ -116,8 +134,12 @@ class GdeltNewsCollector(BaseCollector):
         items: list[CollectedItem] = []
         seen_ids: set[str] = set()
 
+        # Merge default keywords with user interest keywords
+        interest_kws = await _get_interest_keywords()
+        keywords = list(dict.fromkeys(DEFAULT_KEYWORDS + interest_kws))  # dedupe, preserve order
+
         try:
-            for i, keyword in enumerate(KEYWORDS):
+            for i, keyword in enumerate(keywords):
                 # Rate-limit: wait between requests (skip delay before the first)
                 if i > 0:
                     await asyncio.sleep(REQUEST_DELAY_SECONDS)
@@ -135,11 +157,6 @@ class GdeltNewsCollector(BaseCollector):
 
                     tone = _extract_tone(article)
                     category = _detect_category(article)
-
-                    # Normalise tone from [-100, 100] to [0, 1] for probability field
-                    probability = None
-                    if tone is not None:
-                        probability = round((tone + 100) / 200, 4)
 
                     # Parse date
                     resolution_date = None
@@ -161,8 +178,9 @@ class GdeltNewsCollector(BaseCollector):
                             title=article.get("title", ""),
                             description=article.get("url"),
                             category=category,
-                            current_probability=probability,
+                            current_probability=None,
                             resolution_date=resolution_date,
+                            signal_type="news",
                             raw_data={
                                 "url": article.get("url"),
                                 "domain": article.get("domain"),
@@ -175,9 +193,7 @@ class GdeltNewsCollector(BaseCollector):
                         )
                     )
 
-            # Persist
-            saved = await self.save_items(items)
-            logger.info(f"GDELT: collected {len(items)} articles, {saved} new")
+            logger.info(f"GDELT: collected {len(items)} articles")
 
         except Exception as e:
             logger.error(f"GDELT collection failed: {e}")

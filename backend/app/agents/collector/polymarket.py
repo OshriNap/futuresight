@@ -12,12 +12,27 @@ GAMMA_API_URL = "https://gamma-api.polymarket.com"
 class PolymarketCollector(BaseCollector):
     platform = "polymarket"
 
+    @staticmethod
+    async def _get_interest_keywords() -> list[str]:
+        try:
+            from sqlalchemy import select
+            from app.database import async_session
+            from app.models.user_interest import UserInterest
+
+            async with async_session() as db:
+                result = await db.execute(select(UserInterest))
+                interests = result.scalars().all()
+                return [kw for i in interests for kw in (i.keywords or [])]
+        except Exception:
+            return []
+
     async def collect(self) -> list[CollectedItem]:
         """Collect active markets from Polymarket's Gamma API."""
         items = []
+        seen_ids: set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                # Fetch active markets
+                # Fetch top markets by volume
                 response = await client.get(
                     f"{GAMMA_API_URL}/markets",
                     params={
@@ -29,12 +44,41 @@ class PolymarketCollector(BaseCollector):
                     },
                 )
                 response.raise_for_status()
-                markets = response.json()
+                markets = list(response.json())
+
+                # Also search for user interest keywords
+                interest_kws = await self._get_interest_keywords()
+                for kw in interest_kws:
+                    try:
+                        r = await client.get(
+                            f"{GAMMA_API_URL}/markets",
+                            params={
+                                "active": "true",
+                                "closed": "false",
+                                "limit": 20,
+                                "tag": kw,
+                            },
+                        )
+                        r.raise_for_status()
+                        markets.extend(r.json())
+                    except Exception:
+                        pass
 
                 for market in markets:
+                    mid = str(market.get("id", ""))
+                    if mid in seen_ids:
+                        continue
+                    seen_ids.add(mid)
                     # Extract the best probability from outcomes
-                    outcomes = market.get("outcomes", [])
                     prices = market.get("outcomePrices", [])
+
+                    # outcomePrices can be a JSON string like '["0.355", "0.645"]'
+                    if isinstance(prices, str):
+                        import json
+                        try:
+                            prices = json.loads(prices)
+                        except (json.JSONDecodeError, TypeError):
+                            prices = []
 
                     probability = None
                     if prices and len(prices) > 0:
@@ -53,12 +97,11 @@ class PolymarketCollector(BaseCollector):
                             current_probability=probability,
                             resolution_date=market.get("endDate"),
                             raw_data=market,
+                            signal_type="market_probability",
                         )
                     )
 
-            # Save to database
-            saved = await self.save_items(items)
-            logger.info(f"Polymarket: collected {len(items)} markets, {saved} new")
+            logger.info(f"Polymarket: collected {len(items)} markets")
 
         except httpx.HTTPError as e:
             logger.error(f"Polymarket collection failed: {e}")
