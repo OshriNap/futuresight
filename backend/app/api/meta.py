@@ -327,6 +327,17 @@ async def trigger_scoring():
     return {"status": "completed", "result": result}
 
 
+@router.post("/backtest")
+async def trigger_backtest(
+    min_bettors: int = 10,
+    max_markets: int = 200,
+):
+    """Run backtesting against resolved Manifold markets."""
+    from app.tasks.backtest import run_backtest
+    result = await run_backtest(min_bettors=min_bettors, max_markets=max_markets)
+    return {"status": "completed", "result": result}
+
+
 @router.post("/run-pipeline")
 async def run_full_pipeline():
     """Run the full pipeline: collect -> sentiment -> match -> graph -> predict -> score."""
