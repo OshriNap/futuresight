@@ -100,6 +100,7 @@ async def generate_predictions() -> dict:
             signals = {
                 "market_probability": source.current_market_probability,
                 "market_volume": raw.get("volumeNum", 0) or raw.get("volume", 0),
+                "bettor_count": raw.get("uniqueBettorCount", 0),
             }
             if len(prices) >= 2:
                 signals["outcome_prices"] = {
@@ -131,19 +132,28 @@ async def generate_predictions() -> dict:
             if matched_sources:
                 signals["matched_sources"] = matched_sources
 
+            # Cross-market: find same/similar questions on other platforms
+            cross_market = await _find_cross_market(db, source)
+            if cross_market:
+                signals["market_probabilities"] = cross_market
+
             # Determine category from source
             category = source.category or _guess_category(source.title)
 
             # Determine time horizon from resolution date
             time_horizon = "medium"
+            days_to_resolution = None
             if source.resolution_date:
                 from datetime import datetime, timezone
                 now = datetime.now(timezone.utc)
-                days = (source.resolution_date - now).days
-                if days <= 7:
+                days_to_resolution = (source.resolution_date - now).days
+                if days_to_resolution <= 7:
                     time_horizon = "short"
-                elif days > 90:
+                elif days_to_resolution > 90:
                     time_horizon = "long"
+                # Time decay: 0.0 (just opened) to 1.0 (resolving now)
+                # Markets are better calibrated closer to resolution
+                signals["time_decay"] = max(0.0, min(1.0, 1.0 - days_to_resolution / 365))
 
             tool_input = ToolInput(
                 question=source.title,
@@ -216,6 +226,59 @@ async def generate_predictions() -> dict:
         "skipped_sports": skipped_sports,
         "total_sources": len(sources),
     }
+
+
+async def _find_cross_market(db, source: "Source") -> dict[str, float] | None:
+    """Find the same or similar market on other platforms.
+
+    Uses embedding-matched sources if available, otherwise keyword matching.
+    Returns dict of {platform: probability} for the multi_market_ensemble tool.
+    """
+    import re
+
+    # Extract key words from the question
+    stop = {"will", "the", "be", "by", "on", "in", "at", "to", "for", "of", "is",
+            "are", "and", "or", "a", "an", "this", "that", "from", "with", "has", "its",
+            "before", "after", "more", "than", "about"}
+    words = [w for w in re.findall(r'[a-z]+', source.title.lower()) if w not in stop and len(w) > 3]
+    if len(words) < 2:
+        return None
+
+    # Search for markets on other platforms with overlapping keywords
+    from sqlalchemy import and_, or_
+    search_words = words[:4]
+    conditions = [Source.title.ilike(f"%{w}%") for w in search_words]
+
+    result = await db.execute(
+        select(Source)
+        .where(Source.signal_type == "market_probability")
+        .where(Source.platform != source.platform)
+        .where(Source.current_market_probability.isnot(None))
+        .where(or_(*conditions))
+        .limit(10)
+    )
+    candidates = result.scalars().all()
+
+    if not candidates:
+        return None
+
+    # Score candidates by keyword overlap
+    best_match = None
+    best_score = 0
+    source_words = set(words)
+    for c in candidates:
+        c_words = set(w for w in re.findall(r'[a-z]+', c.title.lower()) if w not in stop and len(w) > 3)
+        overlap = len(source_words & c_words)
+        if overlap > best_score and overlap >= 3:  # require 3+ word overlap
+            best_score = overlap
+            best_match = c
+
+    if not best_match:
+        return None
+
+    probs = {source.platform: source.current_market_probability}
+    probs[best_match.platform] = best_match.current_market_probability
+    return probs
 
 
 async def _get_news_sentiment(db, source: "Source") -> float | None:

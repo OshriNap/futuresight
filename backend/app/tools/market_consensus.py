@@ -24,9 +24,16 @@ class MarketConsensusTool(BasePredictionTool):
             )
 
         # Market probability is the prediction
-        # Confidence scales with market volume (more volume = more confident in market)
+        # Confidence scales with volume and bettor count (more activity = better calibrated)
         volume = input.current_signals.get("market_volume", 0)
-        confidence = min(0.9, 0.3 + (volume / 1_000_000) * 0.6) if volume > 0 else 0.5
+        bettors = input.current_signals.get("bettor_count", 0)
+
+        # Volume contribution: log scale (diminishing returns after $10k)
+        import math
+        vol_score = min(0.4, math.log1p(volume) / math.log1p(100_000) * 0.4) if volume > 0 else 0
+        # Bettor contribution: more independent bettors = better wisdom-of-crowds
+        bettor_score = min(0.3, math.log1p(bettors) / math.log1p(200) * 0.3) if bettors > 0 else 0
+        confidence = min(0.9, 0.2 + vol_score + bettor_score)
 
         return ToolOutput(
             probability=float(market_prob),

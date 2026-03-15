@@ -12,6 +12,8 @@ from app.tools.base_rate_tool import BaseRateTool
 from app.tools.base_tool import BasePredictionTool, ToolInput, ToolOutput
 from app.tools.contrarian import ContrarianTool
 from app.tools.extrapolation import AdvancedExtrapolatorTool
+from app.tools.historical_analogy import HistoricalAnalogyTool
+from app.tools.sentiment_divergence import SentimentDivergenceTool
 from app.tools.graph_context import GraphContextTool
 from app.tools.llm_reasoner import LLMReasonerTool
 from app.tools.market_consensus import MarketConsensusTool
@@ -51,6 +53,8 @@ class ToolRegistry:
             NLITool,
             GraphContextTool,
             ContrarianTool,
+            SentimentDivergenceTool,
+            HistoricalAnalogyTool,
         ]:
             tool = tool_class()
             self._tools[tool.name] = tool
@@ -166,11 +170,19 @@ class ToolRegistry:
         # Convert back from log-odds to probability
         weighted_prob = 1.0 / (1.0 + math.exp(-log_odds_sum))
 
-        # Extremize: push away from 0.5 by factor d > 1
-        # d=1.2 is a standard correction from forecasting literature
-        EXTREMIZE_FACTOR = 1.2
+        # Dynamic extremization: push away from 0.5 more when tools agree,
+        # less when they disagree. Agreement = low variance in predictions.
+        probs = [r.output.probability for r in results]
+        mean_prob = sum(probs) / len(probs)
+        variance = sum((p - mean_prob) ** 2 for p in probs) / len(probs)
+        # Max variance for binary is 0.25 (half say 0, half say 1)
+        agreement = 1.0 - min(1.0, variance / 0.06)  # 0=total disagreement, 1=perfect agreement
+
+        # d ranges from 1.0 (disagreement, no extremization) to 1.35 (strong agreement)
+        extremize_factor = 1.0 + 0.35 * agreement
+
         log_odds = math.log(weighted_prob / (1 - weighted_prob))
-        extremized_odds = log_odds * EXTREMIZE_FACTOR
+        extremized_odds = log_odds * extremize_factor
         weighted_prob = 1.0 / (1.0 + math.exp(-extremized_odds))
 
         # Clamp to [0.02, 0.98]
