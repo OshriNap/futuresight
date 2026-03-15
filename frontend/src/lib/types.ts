@@ -1,3 +1,25 @@
+export interface PredictionFactor {
+  signal: string;
+  direction: "supports" | "contradicts" | "neutral";
+  weight: number;
+  counterfactual?: string;
+}
+
+export interface PredictionSource {
+  name: string;
+  platform: string;
+  reliability: number;
+  articles_used?: number;
+  signal?: string;
+}
+
+export interface PredictionSignals {
+  factors?: PredictionFactor[];
+  sources?: PredictionSource[];
+  method?: string;
+  tools_used?: string[];
+}
+
 export interface Prediction {
   id: string;
   title: string;
@@ -15,6 +37,8 @@ export interface Prediction {
   resolution_date?: string;
   resolution?: boolean;
   tags?: string[];
+  reasoning?: string;
+  data_signals?: PredictionSignals;
 }
 
 export interface PredictionScore {

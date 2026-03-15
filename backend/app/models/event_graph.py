@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -11,7 +10,7 @@ from app.database import Base
 class EventNode(Base):
     __tablename__ = "event_nodes"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str | None] = mapped_column(String(100), index=True)
@@ -36,7 +35,7 @@ class EventNode(Base):
 class EventEdge(Base):
     __tablename__ = "event_edges"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     source_node_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("event_nodes.id"))
     target_node_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("event_nodes.id"))
     relationship_type: Mapped[str] = mapped_column(String(30))  # causes, correlates, precedes, amplifies, mitigates

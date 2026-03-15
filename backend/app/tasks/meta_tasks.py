@@ -1,48 +1,27 @@
-"""Celery tasks for meta-agents."""
+"""Meta-agent tasks - called via API endpoints.
 
-import asyncio
+All analytical thinking is handled by Claude Code scheduled tasks.
+These tasks only do mechanical DB operations (reliability scoring, method registration).
+"""
 
-from app.tasks.celery_app import celery
+import logging
 
-
-def run_async(coro):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+logger = logging.getLogger(__name__)
 
 
-@celery.task(name="app.tasks.meta_tasks.run_source_evaluator")
-def run_source_evaluator():
+async def run_source_evaluator() -> dict:
+    """Compute reliability scores (DB-only, no thinking)."""
     from app.agents.meta.source_evaluator import SourceEvaluator
-    return run_async(SourceEvaluator().run())
+    return await SourceEvaluator().run()
 
 
-@celery.task(name="app.tasks.meta_tasks.run_strategy_optimizer")
-def run_strategy_optimizer():
+async def run_strategy_optimizer() -> dict:
+    """No-op. Strategy analysis handled by Claude Code scheduled tasks."""
     from app.agents.meta.strategy_optimizer import StrategyOptimizer
-    return run_async(StrategyOptimizer().run())
+    return await StrategyOptimizer().run()
 
 
-@celery.task(name="app.tasks.meta_tasks.run_method_researcher")
-def run_method_researcher():
+async def run_method_researcher() -> dict:
+    """Ensure prediction methods are registered in DB."""
     from app.agents.meta.method_researcher import MethodResearcher
-    return run_async(MethodResearcher().run())
-
-
-@celery.task(name="app.tasks.meta_tasks.run_feature_ideator")
-def run_feature_ideator():
-    from app.agents.meta.feature_ideator import FeatureIdeator
-    return run_async(FeatureIdeator().run())
-
-
-@celery.task(name="app.tasks.meta_tasks.run_all_meta_agents")
-def run_all_meta_agents():
-    """Run all meta-agents in sequence."""
-    results = {}
-    results["source_evaluator"] = run_source_evaluator()
-    results["strategy_optimizer"] = run_strategy_optimizer()
-    results["method_researcher"] = run_method_researcher()
-    results["feature_ideator"] = run_feature_ideator()
-    return results
+    return await MethodResearcher().run()

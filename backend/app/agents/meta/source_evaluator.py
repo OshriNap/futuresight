@@ -1,15 +1,7 @@
 """Source Evaluator Meta-Agent
 
-Periodically reviews all data sources, evaluates their reliability,
-and recommends adding/removing/adjusting source weights.
-
-Responsibilities:
-- Calculate accuracy rates per source platform
-- Evaluate timeliness (how quickly sources report events)
-- Track coverage (breadth of topics)
-- Compare sources against each other
-- Suggest new sources to add
-- Flag sources that have degraded in quality
+DB-only operations: computes reliability scores per platform.
+All analytical thinking and insight generation is handled by Claude Code scheduled tasks.
 """
 
 import logging
@@ -29,12 +21,10 @@ class SourceEvaluator(BaseMetaAgent):
     agent_type = "source_evaluator"
 
     async def think(self) -> dict:
-        """Evaluate all sources and update reliability scores."""
-        entries = []
+        """Compute and save reliability scores. No insight generation - that's Claude Code's job."""
         actions = []
 
         async with async_session() as db:
-            # Get per-platform stats
             platform_stats = await db.execute(
                 select(
                     Source.platform,
@@ -45,7 +35,6 @@ class SourceEvaluator(BaseMetaAgent):
             )
             stats = platform_stats.all()
 
-            # Get prediction accuracy per source platform
             accuracy_query = await db.execute(
                 select(
                     Source.platform,
@@ -63,13 +52,10 @@ class SourceEvaluator(BaseMetaAgent):
                 avg_brier = acc.get("avg_brier")
                 scored = acc.get("count", 0)
 
-                # Calculate reliability score (composite)
-                reliability = 0.5  # default
+                reliability = 0.5
                 if avg_brier is not None and scored >= 10:
-                    # Lower brier = better (0 is perfect, 1 is worst)
                     reliability = max(0, 1 - avg_brier)
 
-                # Save reliability record
                 record = SourceReliability(
                     platform=platform,
                     reliability_score=reliability,
@@ -78,43 +64,12 @@ class SourceEvaluator(BaseMetaAgent):
                     notes=f"Total items: {total}, Resolved: {resolved}, Scored predictions: {scored}",
                 )
                 db.add(record)
-
-                # Generate insights
-                if avg_brier is not None and avg_brier > 0.4:
-                    entries.append({
-                        "title": f"Low reliability detected: {platform}",
-                        "content": f"Platform {platform} has avg Brier score of {avg_brier:.3f} "
-                                   f"across {scored} predictions. Consider reducing weight or investigating.",
-                        "category": "insight",
-                        "priority": "high",
-                        "tags": ["source_quality", platform],
-                    })
-                    actions.append(f"Flagged {platform} as low reliability (Brier: {avg_brier:.3f})")
-
-                if total > 0 and resolved / total < 0.1 and total > 50:
-                    entries.append({
-                        "title": f"Low resolution rate: {platform}",
-                        "content": f"Only {resolved}/{total} ({resolved/total*100:.1f}%) items from {platform} "
-                                   f"have been resolved. May need better resolution tracking.",
-                        "category": "insight",
-                        "tags": ["resolution", platform],
-                    })
+                actions.append(f"Updated reliability for {platform}: {reliability:.2f}")
 
             await db.commit()
 
-        # Always think about new sources
-        entries.append({
-            "title": "Periodic source review completed",
-            "content": f"Evaluated {len(stats)} platforms. "
-                       "Consider investigating: financial data (FRED API), social media sentiment, "
-                       "academic preprints (arXiv), government data releases, satellite imagery trends.",
-            "category": "idea",
-            "priority": "low",
-            "tags": ["source_expansion"],
-        })
-
         return {
-            "summary": f"Evaluated {len(stats)} source platforms, generated {len(entries)} insights",
+            "summary": f"Computed reliability scores for {len(stats)} platforms",
             "actions": actions,
-            "scratchpad_entries": entries,
+            "scratchpad_entries": [],
         }

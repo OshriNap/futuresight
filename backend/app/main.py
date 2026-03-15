@@ -1,13 +1,17 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from app.api import agents, dashboard, evaluation, event_graph, interests, meta, predictions, webhooks
+from app.database import create_tables
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await create_tables()
     yield
 
 
@@ -39,3 +43,9 @@ app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluatio
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_dashboard():
+    html = Path(__file__).parent / "dashboard.html"
+    return html.read_text()

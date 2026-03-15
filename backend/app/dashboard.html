@@ -230,6 +230,20 @@ function renderMarket(s) {
     </div>`;
 }
 
+function renderSentimentCard(s) {
+  const color = s.avg_sentiment > 0.05 ? 'var(--green)' : s.avg_sentiment < -0.05 ? 'var(--red)' : 'var(--text2)';
+  const sign = s.avg_sentiment > 0 ? '+' : '';
+  const labels = Object.entries(s.by_label || {}).map(function([label, count]) {
+    const cls = label === 'positive' ? 'b-green' : label === 'negative' ? 'b-red' : 'b-blue';
+    return '<span class="badge ' + cls + '">' + label + ': ' + count + '</span>';
+  }).join('');
+  return '<div style="font-size:24px;font-weight:700;color:' + color + ';margin-bottom:8px">'
+    + sign + (s.avg_sentiment?.toFixed(3) || '0.000')
+    + ' <span style="font-size:11px;font-weight:400;color:var(--text2)">avg sentiment</span></div>'
+    + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">' + s.total_scored + '/' + s.total_sources + ' sources scored (' + s.coverage_pct + '%)</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + labels + '</div>';
+}
+
 function sentimentBadge(raw) {
   if (!raw || raw.sentiment == null) return '';
   const s = raw.sentiment;
@@ -342,19 +356,7 @@ loaders.overview = async () => {
         </div>
         <div class="card">
           <h3>Sentiment Analysis</h3>
-          ${sentiment.total_scored > 0 ? `
-            <div style="font-size:24px;font-weight:700;color:${sentiment.avg_sentiment > 0.05 ? 'var(--green)' : sentiment.avg_sentiment < -0.05 ? 'var(--red)' : 'var(--text2)'};margin-bottom:8px">
-              ${sentiment.avg_sentiment > 0 ? '+' : ''}${sentiment.avg_sentiment?.toFixed(3) || '0.000'}
-              <span style="font-size:11px;font-weight:400;color:var(--text2)">avg sentiment</span>
-            </div>
-            <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${sentiment.total_scored}/${sentiment.total_sources} sources scored (${sentiment.coverage_pct}%)</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              ${Object.entries(sentiment.by_label || {}).map(([label, count]) => {
-                const cls = label === 'positive' ? 'b-green' : label === 'negative' ? 'b-red' : 'b-blue';
-                return \`<span class="badge \${cls}">\${label}: \${count}</span>\`;
-              }).join('')}
-            </div>
-          ` : '<div style="color:var(--text3);font-size:12px">No sentiment data yet</div>'}
+          ${sentiment.total_scored > 0 ? renderSentimentCard(sentiment) : '<div style="color:var(--text3);font-size:12px">No sentiment data yet</div>'}
         </div>
         <div class="card">
           <h3>System</h3>

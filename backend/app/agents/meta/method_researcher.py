@@ -1,22 +1,16 @@
 """Method Researcher Meta-Agent
 
-Thinks about and evaluates different prediction methodologies.
-
-Responsibilities:
-- Track which prediction methods are available (statistical, ML, LLM reasoning, etc.)
-- Evaluate method performance per category
-- Research new methods and approaches
-- Manage feature importance tracking
-- Suggest method improvements and new feature engineering ideas
+DB-only operations: ensures prediction methods are registered.
+All analytical thinking is handled by Claude Code scheduled tasks.
 """
 
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.agents.meta.base_meta import BaseMetaAgent
 from app.database import async_session
-from app.models.meta import FeatureImportance, PredictionMethod
+from app.models.meta import PredictionMethod
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +77,10 @@ class MethodResearcher(BaseMetaAgent):
     agent_type = "method_researcher"
 
     async def think(self) -> dict:
-        entries = []
+        """Ensure methods are registered in DB. Analysis is Claude Code's job."""
         actions = []
 
         async with async_session() as db:
-            # Ensure all known methods are registered
             for method_info in KNOWN_METHODS:
                 existing = await db.execute(
                     select(PredictionMethod).where(PredictionMethod.name == method_info["name"])
@@ -101,60 +94,10 @@ class MethodResearcher(BaseMetaAgent):
                     db.add(method)
                     actions.append(f"Registered method: {method_info['name']}")
 
-            # Get performance data for active methods
-            methods_result = await db.execute(
-                select(PredictionMethod)
-                .where(PredictionMethod.is_active == True)
-                .order_by(PredictionMethod.avg_accuracy.desc().nullslast())
-            )
-            active_methods = methods_result.scalars().all()
-
-            # Analyze which methods have enough data
-            untested = [m for m in active_methods if m.total_uses < 10]
-            if untested:
-                entries.append({
-                    "title": f"{len(untested)} methods need more testing",
-                    "content": "The following methods have fewer than 10 uses and need more data: "
-                               + ", ".join(m.name for m in untested)
-                               + ". Consider running A/B tests or allocating prediction quota.",
-                    "category": "todo",
-                    "priority": "medium",
-                    "tags": ["method_testing", "experiment"],
-                })
-
-            # Check for methods that consistently underperform
-            poor_methods = [m for m in active_methods if m.avg_accuracy is not None and m.avg_accuracy < 0.3 and m.total_uses >= 20]
-            for m in poor_methods:
-                entries.append({
-                    "title": f"Method underperforming: {m.name}",
-                    "content": f"{m.name} has {m.avg_accuracy:.1%} accuracy across {m.total_uses} uses. "
-                               f"Best categories: {m.best_categories}, Worst: {m.worst_categories}. "
-                               f"Consider deactivating or restricting to best categories only.",
-                    "category": "insight",
-                    "priority": "high",
-                    "tags": ["method_quality", m.name],
-                })
-
-            # Feature importance analysis ideas
-            entries.append({
-                "title": "Feature engineering review",
-                "content": "Current known features: " + ", ".join(f["name"] for f in KNOWN_FEATURES)
-                           + "\n\nPotential new features to explore:\n"
-                           "- Social media mention velocity\n"
-                           "- Expert vs crowd disagreement score\n"
-                           "- Event recurrence patterns (has this type of event happened before?)\n"
-                           "- Geographic proximity signals\n"
-                           "- Economic indicator correlations\n"
-                           "- Seasonal patterns for certain event types",
-                "category": "idea",
-                "priority": "medium",
-                "tags": ["features", "research"],
-            })
-
             await db.commit()
 
         return {
-            "summary": f"Reviewed {len(active_methods)} methods, {len(entries)} insights generated",
+            "summary": f"Ensured {len(KNOWN_METHODS)} methods are registered in DB",
             "actions": actions,
-            "scratchpad_entries": entries,
+            "scratchpad_entries": [],
         }

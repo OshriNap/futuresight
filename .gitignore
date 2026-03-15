@@ -7,5 +7,5 @@ dist/
 node_modules/
 .next/
 .pytest_cache/
-celerybeat-schedule
+data/
 .claude/settings.local.json
