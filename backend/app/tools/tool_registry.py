@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from app.tools.base_rate_tool import BaseRateTool
 from app.tools.base_tool import BasePredictionTool, ToolInput, ToolOutput
+from app.tools.contrarian import ContrarianTool
 from app.tools.extrapolation import AdvancedExtrapolatorTool
 from app.tools.graph_context import GraphContextTool
 from app.tools.llm_reasoner import LLMReasonerTool
@@ -49,6 +50,7 @@ class ToolRegistry:
             BaseRateTool,
             NLITool,
             GraphContextTool,
+            ContrarianTool,
         ]:
             tool = tool_class()
             self._tools[tool.name] = tool

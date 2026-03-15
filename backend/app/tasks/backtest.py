@@ -70,6 +70,13 @@ async def fetch_resolved_markets(
                 logger.warning(f"Manifold search failed for '{term}': {e}")
 
     # Filter to usable markets
+    # Skip meta/trick/self-resolving markets that poison backtests
+    JUNK_KEYWORDS = [
+        "self-resolving", "this market", "will this question",
+        "will the market", "resolve yes", "resolve no",
+        "mana", "manifold", "will i ",
+    ]
+
     good = []
     for m in all_markets:
         if m.get("resolution") not in ("YES", "NO"):
@@ -79,6 +86,10 @@ async def fetch_resolved_markets(
         if m.get("uniqueBettorCount", 0) < min_bettors:
             continue
         if m.get("probability") is None:
+            continue
+        # Filter junk/meta markets
+        q_lower = m.get("question", "").lower()
+        if any(kw in q_lower for kw in JUNK_KEYWORDS):
             continue
         good.append(m)
 
