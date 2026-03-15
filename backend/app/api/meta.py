@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -268,8 +268,10 @@ async def trigger_meta_agent(agent_type: str):
 
 
 @router.post("/collect/{collector_name}")
-async def trigger_collection(collector_name: str):
-    """Trigger a data collection run."""
+async def trigger_collection(
+    collector_name: str, background_tasks: BackgroundTasks = None,
+):
+    """Trigger a data collection run (runs in background)."""
     from app.tasks.collection_tasks import (
         collect_all,
         collect_gdelt,
@@ -323,6 +325,29 @@ async def trigger_scoring():
     from app.tasks.scoring_tasks import resolve_and_score
     result = await resolve_and_score()
     return {"status": "completed", "result": result}
+
+
+@router.post("/run-pipeline")
+async def run_full_pipeline():
+    """Run the full pipeline: collect -> sentiment -> match -> graph -> predict -> score."""
+    results = {}
+
+    from app.tasks.collection_tasks import collect_all
+    results["collection"] = await collect_all()
+
+    from app.tasks.embedding_tasks import match_sources
+    results["matching"] = await match_sources()
+
+    from app.tasks.graph_tasks import build_event_graph
+    results["graph"] = await build_event_graph()
+
+    from app.tasks.prediction_tasks import generate_predictions
+    results["predictions"] = await generate_predictions()
+
+    from app.tasks.scoring_tasks import resolve_and_score
+    results["scoring"] = await resolve_and_score()
+
+    return {"status": "completed", "result": results}
 
 
 @router.post("/analyze-sentiment")

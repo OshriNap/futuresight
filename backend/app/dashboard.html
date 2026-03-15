@@ -303,6 +303,7 @@ loaders.overview = async () => {
       <button class="btn btn-p" onclick="doAction(this,'match-sources','')">Match Sources</button>
       <button class="btn btn-p" onclick="doAction(this,'score-predictions','')">Score Predictions</button>
       <button class="btn" onclick="doAction(this,'trigger','source_evaluator')">Evaluate Sources</button>
+      <button class="btn btn-p" onclick="doAction(this,'run-pipeline','')">Run Full Pipeline</button>
     </div>
 
     <div class="grid-2">
@@ -805,8 +806,19 @@ async function doAction(btn, type, name) {
   }
 }
 
+// Auto-refresh every 60s when on overview tab
+let _refreshInterval = null;
+function startAutoRefresh() {
+  if (_refreshInterval) clearInterval(_refreshInterval);
+  _refreshInterval = setInterval(() => {
+    const active = document.querySelector('.nav-item.active')?.dataset.tab;
+    if (active === 'overview') loaders.overview();
+  }, 60000);
+}
+
 // Init
 loaders.overview();
+startAutoRefresh();
 </script>
 </body>
 </html>

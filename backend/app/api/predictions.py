@@ -42,7 +42,7 @@ class PredictionResponse(BaseModel):
 @router.get("/", response_model=list[PredictionResponse])
 async def list_predictions(
     time_horizon: str | None = None,
-    category: str | None = None,
+    search: str | None = None,
     limit: int = Query(default=50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -50,6 +50,8 @@ async def list_predictions(
     query = select(Prediction).order_by(Prediction.created_at.desc()).offset(offset).limit(limit)
     if time_horizon:
         query = query.where(Prediction.time_horizon == time_horizon)
+    if search:
+        query = query.where(Prediction.prediction_text.ilike(f"%{search}%"))
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -62,6 +64,28 @@ async def get_prediction(prediction_id: uuid.UUID, db: AsyncSession = Depends(ge
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Prediction not found")
     return prediction
+
+
+@router.get("/{prediction_id}/history")
+async def get_prediction_history(prediction_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Get price history for a prediction's linked source (for sparklines)."""
+    from app.models.price_history import PriceSnapshot
+
+    result = await db.execute(select(Prediction).where(Prediction.id == prediction_id))
+    prediction = result.scalar_one_or_none()
+    if not prediction or not prediction.source_id:
+        return []
+
+    history = await db.execute(
+        select(PriceSnapshot)
+        .where(PriceSnapshot.source_id == prediction.source_id)
+        .order_by(PriceSnapshot.recorded_at.asc())
+        .limit(100)
+    )
+    return [
+        {"timestamp": s.recorded_at.isoformat(), "probability": s.probability}
+        for s in history.scalars().all()
+    ]
 
 
 @router.post("/", response_model=PredictionResponse, status_code=201)
