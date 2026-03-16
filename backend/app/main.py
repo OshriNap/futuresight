@@ -49,4 +49,4 @@ async def health():
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
     html = Path(__file__).parent / "dashboard.html"
-    return html.read_text()
+    return HTMLResponse(content=html.read_text(), headers={"Cache-Control": "no-cache"})

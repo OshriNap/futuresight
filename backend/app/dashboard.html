@@ -897,11 +897,17 @@ loaders.scratchpad = async () => {
 
 // ── Evolution ──
 loaders.evolution = async () => {
-  const [champion, genomes, history] = await Promise.all([
-    api('/api/evolution/champion'),
-    api('/api/evolution/genomes'),
-    api('/api/evolution/history'),
-  ]);
+  let champion, genomes, history;
+  try {
+    [champion, genomes, history] = await Promise.all([
+      api('/api/evolution/champion'),
+      api('/api/evolution/genomes'),
+      api('/api/evolution/history'),
+    ]);
+  } catch(e) {
+    document.getElementById('tab-evolution').innerHTML = `<h2 style="margin-bottom:16px">Strategy Evolution</h2><div class="card"><div style="color:var(--red)">Failed to load evolution data: ${e.message}</div></div>`;
+    return;
+  }
   const statusColor = {champion:'b-green',candidate:'b-amber',retired:'b-red'};
   const fitnessDisplay = v => v != null ? v.toFixed(4) : 'pending';
 
@@ -927,6 +933,7 @@ loaders.evolution = async () => {
     <h2 style="margin-bottom:16px">Strategy Evolution</h2>
     <div class="actions">
       <button class="btn btn-p" onclick="doEvolution(this)">Run Evolution Cycle</button>
+      <button class="btn" onclick="doBacktest(this)">Backtest Evolution (10 gen)</button>
       <button class="btn" onclick="doProposeMutations(this)">Ollama: Preview Mutations</button>
     </div>
 
@@ -993,6 +1000,24 @@ async function doEvolution(btn) {
   try {
     await post('/api/evolution/evolve');
     btn.textContent = 'Done';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; loaders.evolution(); }, 1000);
+  } catch(e) {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+  }
+}
+
+async function doBacktest(btn) {
+  const orig = btn.textContent;
+  btn.textContent = 'Running...'; btn.disabled = true;
+  try {
+    const r = await (await fetch('/api/evolution/backtest?generations=10&candidates=5', {method:'POST'})).json();
+    const res = r.result || {};
+    btn.textContent = 'Done';
+    const improved = res.total_improvement || 0;
+    const gens = res.generations_run || 0;
+    const evolved = Object.keys(res.evolved_params || {}).length;
+    alert(`Backtest complete!\n\n${gens} generations on ${res.dataset_size} resolved markets\nBrier improvement: ${improved.toFixed(4)}\nFinal champion: gen ${res.final_champion?.generation}, Brier ${res.final_champion?.fitness}\nEvolved ${evolved} params from defaults`);
     setTimeout(() => { btn.textContent = orig; btn.disabled = false; loaders.evolution(); }, 1000);
   } catch(e) {
     btn.textContent = 'Error';

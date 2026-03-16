@@ -103,6 +103,23 @@ async def evolution_history(
     ]
 
 
+# ── Backtest evolution (fast-track using resolved markets) ──
+
+@router.post("/backtest")
+async def run_backtest_evolution(
+    generations: int = Query(default=10, ge=1, le=50),
+    candidates: int = Query(default=5, ge=2, le=20),
+):
+    """Run evolution against already-resolved markets for immediate parameter optimization.
+
+    Instead of waiting weeks for markets to resolve, replays the prediction pipeline
+    with different genome params on historical data. Runs N generations in minutes.
+    """
+    from app.tasks.evolution_backtest import run_evolution_backtest
+    result = await run_evolution_backtest(generations=generations, candidates_per_gen=candidates)
+    return {"status": "completed", "result": result}
+
+
 # ── Ollama-powered guided mutation (local, fast) ──
 
 @router.post("/propose-mutations")
