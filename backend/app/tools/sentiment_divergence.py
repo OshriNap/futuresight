@@ -20,6 +20,7 @@ class SentimentDivergenceTool(BasePredictionTool):
     best_for = ["technology", "geopolitics", "economy", "politics", "finance"]
 
     async def predict(self, input: ToolInput) -> ToolOutput:
+        params = input.genome_params or {}
         market_prob = input.current_signals.get("market_probability", 0.5)
         sentiment = input.current_signals.get("news_sentiment")
 
@@ -41,7 +42,8 @@ class SentimentDivergenceTool(BasePredictionTool):
         divergence = market_signal - sentiment  # high = market bullish + sentiment bearish
 
         # Only act on meaningful divergence
-        if abs(divergence) < 0.3:
+        div_threshold = params.get("sentiment.divergence_threshold", 0.3)
+        if abs(divergence) < div_threshold:
             return ToolOutput(
                 probability=market_prob,
                 confidence=0.15,
@@ -50,8 +52,8 @@ class SentimentDivergenceTool(BasePredictionTool):
             )
 
         # Apply correction: push probability toward where sentiment suggests
-        # Scale: max ±8% adjustment for strong divergence
-        correction = -divergence * 0.04  # negative divergence = sentiment says "too bullish"
+        correction_factor = params.get("sentiment.correction_factor", 0.04)
+        correction = -divergence * correction_factor
         adjusted = max(0.02, min(0.98, market_prob + correction))
 
         confidence = min(0.5, 0.2 + abs(divergence) * 0.2)

@@ -80,6 +80,10 @@ class ToolRegistry:
         Returns:
             List of tool names to use, ordered by expected quality.
         """
+        params = input.genome_params or {}
+        category_bonus = params.get("ensemble.category_bonus", 0.2)
+        perf_weight = params.get("ensemble.performance_weight", 0.3)
+
         candidates = []
         for name, tool in self._tools.items():
             can_handle, reason = tool.can_handle(input)
@@ -90,13 +94,13 @@ class ToolRegistry:
             score = 0.5  # baseline
 
             if input.category in tool.best_for:
-                score += 0.2
+                score += category_bonus
 
             if performance_data and name in performance_data:
                 perf = performance_data[name]
                 if perf["count"] >= 5:
                     # Lower Brier = better, so invert
-                    score += (1 - perf["brier_score"]) * 0.3
+                    score += (1 - perf["brier_score"]) * perf_weight
 
             candidates.append((name, score))
 
@@ -135,7 +139,7 @@ class ToolRegistry:
 
         return results
 
-    def ensemble_prediction(self, results: list[ToolResult]) -> ToolOutput:
+    def ensemble_prediction(self, results: list[ToolResult], genome_params: dict | None = None) -> ToolOutput:
         """Combine multiple tool outputs using log-linear pooling with extremization.
 
         Log-linear pooling is superior to linear averaging for probability
@@ -144,6 +148,8 @@ class ToolRegistry:
         regression-to-the-mean bias in averaged forecasts.
         """
         import math
+
+        params = genome_params or {}
 
         if not results:
             return ToolOutput(probability=0.5, confidence=0.1, reasoning="No tools produced results", signals_used=[])
@@ -176,10 +182,12 @@ class ToolRegistry:
         mean_prob = sum(probs) / len(probs)
         variance = sum((p - mean_prob) ** 2 for p in probs) / len(probs)
         # Max variance for binary is 0.25 (half say 0, half say 1)
-        agreement = 1.0 - min(1.0, variance / 0.06)  # 0=total disagreement, 1=perfect agreement
+        var_divisor = params.get("ensemble.variance_divisor", 0.06)
+        agreement = 1.0 - min(1.0, variance / var_divisor)
 
-        # d ranges from 1.0 (disagreement, no extremization) to 1.35 (strong agreement)
-        extremize_factor = 1.0 + 0.35 * agreement
+        # d ranges from 1.0 (disagreement) to 1.0 + extremize_max (strong agreement)
+        extremize_max = params.get("ensemble.extremize_max", 0.35)
+        extremize_factor = 1.0 + extremize_max * agreement
 
         log_odds = math.log(weighted_prob / (1 - weighted_prob))
         extremized_odds = log_odds * extremize_factor
@@ -240,11 +248,23 @@ class ToolRegistry:
                 "counterfactual": counterfactual,
             })
 
+        # Store per-tool raw outputs for counterfactual analysis
+        tool_outputs = {}
+        for r in results:
+            tool_outputs[r.tool_name] = {
+                "probability": round(r.output.probability, 4),
+                "confidence": round(r.output.confidence, 4),
+                "weight": round(r.weight, 4),
+                "signals_used": r.output.signals_used,
+            }
+
         return {
             "factors": factors,
             "sources": [],  # Populated by collectors when source data is available
             "method": "ensemble",
             "tools_used": [r.tool_name for r in results],
+            "tool_outputs": tool_outputs,
+            "ensemble_probability": round(ensemble_prob, 4),
         }
 
 

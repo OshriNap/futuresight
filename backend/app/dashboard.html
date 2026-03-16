@@ -122,8 +122,10 @@ tr:hover { background:var(--bg3); }
     <a class="nav-item" data-tab="methods" onclick="showTab('methods')">Methods</a>
     <a class="nav-item" data-tab="graph" onclick="showTab('graph')">Event Graph</a>
     <a class="nav-item" data-tab="interests" onclick="showTab('interests')">Interests</a>
+    <a class="nav-item" data-tab="patterns" onclick="showTab('patterns')">Patterns</a>
     <a class="nav-item" data-tab="agents" onclick="showTab('agents')">Agent Runs</a>
     <a class="nav-item" data-tab="scratchpad" onclick="showTab('scratchpad')">Scratchpad</a>
+    <a class="nav-item" data-tab="evolution" onclick="showTab('evolution')">Evolution</a>
   </nav>
   <main>
     <div id="tab-overview" class="tab-content"></div>
@@ -133,8 +135,10 @@ tr:hover { background:var(--bg3); }
     <div id="tab-methods" class="tab-content" style="display:none"></div>
     <div id="tab-graph" class="tab-content" style="display:none"></div>
     <div id="tab-interests" class="tab-content" style="display:none"></div>
+    <div id="tab-patterns" class="tab-content" style="display:none"></div>
     <div id="tab-agents" class="tab-content" style="display:none"></div>
     <div id="tab-scratchpad" class="tab-content" style="display:none"></div>
+    <div id="tab-evolution" class="tab-content" style="display:none"></div>
   </main>
 </div>
 
@@ -442,6 +446,7 @@ function renderPredictions(preds) {
             ${p.reasoning ? `<div style="margin-bottom:10px"><strong>Reasoning:</strong><br>${p.reasoning}</div>` : ''}
             ${factorsHtml ? `<div style="margin-bottom:10px"><strong>Key Factors:</strong><br>${factorsHtml}</div>` : ''}
             ${sourcesHtml ? `<div style="margin-bottom:10px"><strong>Sources:</strong><br>${sourcesHtml}</div>` : ''}
+            ${ds.tool_outputs ? `<button class="btn" onclick="event.stopPropagation();showCounterfactual('${p.id}')" style="font-size:11px;padding:4px 10px;margin-top:4px">What-If Analysis</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -736,6 +741,107 @@ async function deleteInterest(id) {
   loaders.interests();
 }
 
+// ── Pattern Library ──
+loaders.patterns = async () => {
+  const [patterns, summary] = await Promise.all([
+    api('/api/meta/patterns'),
+    api('/api/meta/patterns/summary'),
+  ]);
+  const statusIcon = {validated:'🟢',candidate:'🟡',rejected:'🔴',retired:'⚪'};
+  const typeColor = {signal_pattern:'b-cyan',tool_interaction:'b-purple',calibration:'b-amber',category_bias:'b-red'};
+
+  document.getElementById('tab-patterns').innerHTML = `
+    <h2 style="margin-bottom:16px">Pattern Library</h2>
+    <div class="stats">
+      <div class="card stat"><div class="value">${summary.total}</div><div class="label">Total Patterns</div></div>
+      <div class="card stat"><div class="value" style="color:var(--green)">${summary.validated}</div><div class="label">Validated</div></div>
+      <div class="card stat"><div class="value" style="color:var(--amber)">${summary.candidate}</div><div class="label">Candidate</div></div>
+      <div class="card stat"><div class="value" style="color:var(--red)">${summary.rejected}</div><div class="label">Rejected</div></div>
+    </div>
+    ${summary.total > 0 ? `
+    <div class="card">
+      <h3>By Type</h3>
+      ${Object.entries(summary.by_type || {}).map(([t,c]) => `
+        <div class="bar-row">
+          <span class="name">${t.replace(/_/g,' ')}</span>
+          <div class="bar-bg"><div class="bar-fill" style="width:${c/Math.max(summary.total,1)*100}%;background:var(--purple)"></div></div>
+          <span class="count">${c}</span>
+        </div>
+      `).join('')}
+    </div>` : ''}
+    <div class="card">
+      <h3>All Patterns (${patterns.length})</h3>
+      <div class="scroll" style="max-height:600px">
+        ${patterns.map(p => `
+          <div class="run">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <span style="margin-right:4px">${statusIcon[p.status]||'⚪'}</span>
+                <span class="badge ${typeColor[p.pattern_type]||'b-blue'}">${p.pattern_type.replace(/_/g,' ')}</span>
+                ${p.category ? `<span class="badge b-blue">${p.category}</span>` : ''}
+                <span style="font-size:10px;color:var(--text3);margin-left:4px">v${p.version}</span>
+              </div>
+              <span style="font-size:10px;color:var(--text3)">${ago(p.updated_at)}</span>
+            </div>
+            <div style="font-weight:600;margin-top:6px;font-size:13px">${p.name.replace(/_/g,' ')}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:4px;line-height:1.5">${p.description}</div>
+            <div style="margin-top:6px;display:flex;gap:12px;font-size:11px;color:var(--text3)">
+              <span>Seen: <b style="color:var(--text)">${p.times_seen}</b></span>
+              <span>Correct: <b style="color:var(--green)">${p.times_correct}</b></span>
+              <span>Accuracy: <b style="color:${p.accuracy >= 0.6 ? 'var(--green)' : p.accuracy >= 0.4 ? 'var(--amber)' : 'var(--red)'}">${p.accuracy != null ? (p.accuracy * 100).toFixed(0) + '%' : '—'}</b></span>
+            </div>
+          </div>
+        `).join('') || '<div style="color:var(--text3);padding:20px">No patterns detected yet. Patterns emerge after predictions are scored.</div>'}
+      </div>
+    </div>
+  `;
+};
+
+// ── Counterfactual Modal ──
+async function showCounterfactual(predId) {
+  const data = await api(`/api/predictions/${predId}/counterfactual`);
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:999';
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+
+  const maxShift = Math.max(...data.counterfactuals.map(c => Math.abs(c.shift)), 0.01);
+
+  modal.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:650px;width:90%;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="color:var(--text);font-size:16px;text-transform:none;letter-spacing:0">Counterfactual Analysis</h3>
+        <span onclick="this.closest('div[style*=fixed]').remove()" style="cursor:pointer;color:var(--text3);font-size:20px">&times;</span>
+      </div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.4">${data.prediction_text || ''}</div>
+      <div style="font-size:14px;margin-bottom:16px">Ensemble: <b style="color:var(--blue)">${pct(data.ensemble_probability)}</b></div>
+      ${data.counterfactuals?.length ? data.counterfactuals.map(c => {
+        const barW = Math.abs(c.shift) / maxShift * 100;
+        const color = c.shift > 0.01 ? 'var(--green)' : c.shift < -0.01 ? 'var(--red)' : 'var(--text3)';
+        const arrow = c.shift > 0.01 ? '↑' : c.shift < -0.01 ? '↓' : '→';
+        return `
+          <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <span style="font-weight:600;font-size:13px">${c.tool}</span>
+                <span style="font-size:11px;color:var(--text3);margin-left:8px">${pct(c.tool_probability)} (w=${c.tool_weight.toFixed(2)})</span>
+              </div>
+              <span style="color:${color};font-weight:600;font-size:13px">${arrow} ${c.shift > 0 ? '+' : ''}${(c.shift * 100).toFixed(1)}pp</span>
+            </div>
+            <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
+              <span style="font-size:11px;color:var(--text3);width:80px">Without:</span>
+              <div style="flex:1;height:4px;background:var(--bg);border-radius:2px">
+                <div style="width:${barW}%;height:100%;background:${color};border-radius:2px"></div>
+              </div>
+              <span style="font-size:11px;color:var(--text2);width:45px;text-align:right">${pct(c.without_tool)}</span>
+            </div>
+            ${c.signals_used?.length ? `<div style="margin-top:4px;font-size:10px;color:var(--text3)">Signals: ${c.signals_used.join(', ')}</div>` : ''}
+          </div>`;
+      }).join('') : '<div style="color:var(--text3);padding:12px">No per-tool data available for this prediction.</div>'}
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
 // ── Agent Runs ──
 loaders.agents = async () => {
   const runs = await api('/api/meta/runs?limit=50');
@@ -744,6 +850,7 @@ loaders.agents = async () => {
     <div class="actions">
       <button class="btn" onclick="doAction(this,'trigger','source_evaluator')">Source Evaluator</button>
       <button class="btn" onclick="doAction(this,'trigger','strategy_optimizer')">Strategy Optimizer</button>
+      <button class="btn" onclick="doAction(this,'trigger','feature_ideator')">Feature Ideator</button>
       <button class="btn" onclick="doAction(this,'trigger','method_researcher')">Method Researcher</button>
     </div>
     <div class="card scroll">${runs.map(r => `
@@ -787,6 +894,130 @@ loaders.scratchpad = async () => {
     `).join('') || '<div style="color:var(--text3);padding:20px">No entries yet. Scheduled tasks will populate this.</div>'}</div>
   `;
 };
+
+// ── Evolution ──
+loaders.evolution = async () => {
+  const [champion, genomes, history] = await Promise.all([
+    api('/api/evolution/champion'),
+    api('/api/evolution/genomes'),
+    api('/api/evolution/history'),
+  ]);
+  const statusColor = {champion:'b-green',candidate:'b-amber',retired:'b-red'};
+  const fitnessDisplay = v => v != null ? v.toFixed(4) : 'pending';
+
+  // Champion params: show mutations from default
+  let paramsHtml = '';
+  if (champion.genome_data) {
+    const entries = Object.entries(champion.genome_data).sort((a,b) => a[0].localeCompare(b[0]));
+    const groups = {};
+    entries.forEach(([k,v]) => {
+      const prefix = k.split('.')[0];
+      if (!groups[prefix]) groups[prefix] = [];
+      groups[prefix].push([k, v]);
+    });
+    paramsHtml = Object.entries(groups).map(([g, params]) => `
+      <div style="margin-bottom:8px">
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;margin-bottom:4px">${g}</div>
+        ${params.map(([k,v]) => `<span style="font-size:11px;margin-right:8px"><span style="color:var(--text2)">${k.split('.')[1]}:</span> ${typeof v === 'number' ? v.toFixed(4) : v}</span>`).join('')}
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('tab-evolution').innerHTML = `
+    <h2 style="margin-bottom:16px">Strategy Evolution</h2>
+    <div class="actions">
+      <button class="btn btn-p" onclick="doEvolution(this)">Run Evolution Cycle</button>
+      <button class="btn" onclick="doProposeMutations(this)">Ollama: Preview Mutations</button>
+    </div>
+
+    <div class="card">
+      <h3>Champion Genome</h3>
+      ${champion.status === 'no_champion' ? '<div style="color:var(--text3)">No champion yet. Click "Run Evolution Cycle" to bootstrap.</div>' : `
+        <div class="stats">
+          <div class="stat"><div class="value">${champion.generation}</div><div class="label">Generation</div></div>
+          <div class="stat"><div class="value">${fitnessDisplay(champion.fitness)}</div><div class="label">Fitness (Brier)</div></div>
+          <div class="stat"><div class="value">${champion.scored_predictions || 0}</div><div class="label">Scored Predictions</div></div>
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:var(--text2)">${champion.notes || ''}</div>
+        <details style="margin-top:12px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--blue)">Show all parameters (${Object.keys(champion.genome_data || {}).length})</summary>
+          <div style="margin-top:8px;font-family:monospace;font-size:11px">${paramsHtml}</div>
+        </details>
+      `}
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>All Genomes</h3>
+        <div class="scroll">${(genomes || []).map(g => `
+          <div class="run">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <span class="badge ${statusColor[g.status]||'b-blue'}">${g.status}</span>
+                <span style="font-size:12px;margin-left:6px">Gen ${g.generation}</span>
+              </div>
+              <span style="font-size:10px;color:var(--text3)">${ago(g.created_at)}</span>
+            </div>
+            <div style="display:flex;gap:16px;margin-top:6px;font-size:12px">
+              <span><span style="color:var(--text2)">Fitness:</span> ${fitnessDisplay(g.fitness)}</span>
+              <span><span style="color:var(--text2)">Scored:</span> ${g.scored_predictions}</span>
+              <span><span style="color:var(--text2)">Params:</span> ${g.param_count}</span>
+            </div>
+            ${g.notes ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">${g.notes}</div>` : ''}
+          </div>
+        `).join('') || '<div style="color:var(--text3)">No genomes yet</div>'}</div>
+      </div>
+
+      <div class="card">
+        <h3>Evolution History</h3>
+        <div class="scroll">${(history || []).map(r => `
+          <div class="run">
+            <div style="display:flex;justify-content:space-between">
+              <span style="font-size:12px;font-weight:600">Gen ${r.generation}</span>
+              <span style="font-size:10px;color:var(--text3)">${ago(r.created_at)}</span>
+            </div>
+            <div style="font-size:11px;color:var(--text2);margin-top:4px">
+              Created: ${r.candidates_created} | Retired: ${r.candidates_retired} | Promoted: ${r.candidates_promoted}
+              ${r.champion_fitness != null ? ` | Champion Brier: ${r.champion_fitness.toFixed(4)}` : ''}
+            </div>
+          </div>
+        `).join('') || '<div style="color:var(--text3)">No evolution runs yet</div>'}</div>
+      </div>
+    </div>
+  `;
+};
+
+async function doEvolution(btn) {
+  const orig = btn.textContent;
+  btn.textContent = '...'; btn.disabled = true;
+  try {
+    await post('/api/evolution/evolve');
+    btn.textContent = 'Done';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; loaders.evolution(); }, 1000);
+  } catch(e) {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+  }
+}
+
+async function doProposeMutations(btn) {
+  const orig = btn.textContent;
+  btn.textContent = '...'; btn.disabled = true;
+  try {
+    const r = await post('/api/evolution/propose-mutations');
+    btn.textContent = 'Done';
+    if (r.proposed_mutations) {
+      const lines = r.proposed_mutations.map(m => `${m.param}: ${m.value} — ${m.reason}`).join('\n');
+      alert('LLM Proposed Mutations:\n\n' + lines);
+    } else {
+      alert(r.message || 'No mutations proposed');
+    }
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1200);
+  } catch(e) {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+  }
+}
 
 // ── Actions ──
 async function doAction(btn, type, name) {

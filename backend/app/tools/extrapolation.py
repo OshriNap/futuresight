@@ -146,7 +146,14 @@ def mean_reversion(values: list[float], reversion_speed: float = 0.3) -> Extrapo
     )
 
 
-def ensemble_extrapolation(values: list[float]) -> ExtrapolationResult:
+def ensemble_extrapolation(
+    values: list[float],
+    ses_alpha: float = 0.3,
+    holt_alpha: float = 0.3,
+    holt_beta: float = 0.1,
+    ma_window: int = 5,
+    reversion_speed: float = 0.3,
+) -> ExtrapolationResult:
     """Ensemble of all extrapolation methods.
 
     Weights methods by their fit quality on historical data.
@@ -156,10 +163,10 @@ def ensemble_extrapolation(values: list[float]) -> ExtrapolationResult:
 
     methods = [
         linear_extrapolation(values),
-        exponential_smoothing(values, alpha=0.3),
-        double_exponential(values),
-        moving_average_forecast(values),
-        mean_reversion(values),
+        exponential_smoothing(values, alpha=ses_alpha),
+        double_exponential(values, alpha=holt_alpha, beta=holt_beta),
+        moving_average_forecast(values, window=ma_window),
+        mean_reversion(values, reversion_speed=reversion_speed),
     ]
 
     # Weight by fit quality
@@ -189,6 +196,7 @@ class AdvancedExtrapolatorTool(BasePredictionTool):
     best_for = ["economics", "markets", "tech"]
 
     async def predict(self, input: ToolInput) -> ToolOutput:
+        params = input.genome_params or {}
         history = input.current_signals.get("probability_history", [])
         values = [h["probability"] for h in history] if history else []
 
@@ -200,7 +208,14 @@ class AdvancedExtrapolatorTool(BasePredictionTool):
                 signals_used=["market_probability"] if "market_probability" in input.current_signals else [],
             )
 
-        result = ensemble_extrapolation(values)
+        result = ensemble_extrapolation(
+            values,
+            ses_alpha=params.get("extrapolation.ses_alpha", 0.3),
+            holt_alpha=params.get("extrapolation.holt_alpha", 0.3),
+            holt_beta=params.get("extrapolation.holt_beta", 0.1),
+            ma_window=int(params.get("extrapolation.ma_window", 5)),
+            reversion_speed=params.get("extrapolation.reversion_speed", 0.3),
+        )
 
         return ToolOutput(
             probability=result.predicted_value,

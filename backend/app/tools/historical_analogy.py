@@ -79,6 +79,7 @@ class HistoricalAnalogyTool(BasePredictionTool):
     best_for = ["technology", "geopolitics", "politics", "economy", "general"]
 
     async def predict(self, input: ToolInput) -> ToolOutput:
+        params = input.genome_params or {}
         market_prob = input.current_signals.get("market_probability", 0.5)
         question_lower = input.question.lower()
 
@@ -100,11 +101,11 @@ class HistoricalAnalogyTool(BasePredictionTool):
         # Use the best-matching pattern (most keyword hits)
         matches.sort(key=lambda x: x[2], reverse=True)
         best_name, best_pattern, hit_count = matches[0]
-        base_rate = best_pattern["yes_rate"]
+        # Use evolved yes_rate if available, else pattern default
+        base_rate = params.get(f"historical.{best_name}_yes_rate", best_pattern["yes_rate"])
 
         # Blend base rate with market probability
-        # Weight: 20% base rate, 80% market (market is still the stronger signal)
-        blend_weight = 0.20
+        blend_weight = params.get("historical.blend_weight", 0.20)
         adjusted = market_prob * (1 - blend_weight) + base_rate * blend_weight
 
         # Clamp

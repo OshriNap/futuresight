@@ -23,6 +23,7 @@ class LLMReasonerTool(BasePredictionTool):
 
     def _predict_heuristic(self, input: ToolInput) -> ToolOutput:
         """Heuristic reasoning using weighted combination of available signals."""
+        params = input.genome_params or {}
         signals = input.current_signals
         probability = 0.5
         total_weight = 0.0
@@ -34,7 +35,9 @@ class LLMReasonerTool(BasePredictionTool):
         if "market_probability" in signals:
             market_p = signals["market_probability"]
             time_decay = signals.get("time_decay", 0.5)
-            w = 3.0 + time_decay * 2.0  # 3.0 (far out) to 5.0 (near resolution)
+            base_w = params.get("llm.market_weight_base", 3.0)
+            time_scale = params.get("llm.market_weight_time_scale", 2.0)
+            w = base_w + time_decay * time_scale
             probability = (probability * total_weight + market_p * w) / (total_weight + w)
             total_weight += w
             reasoning_parts.append(f"market={market_p:.1%}")
@@ -46,7 +49,8 @@ class LLMReasonerTool(BasePredictionTool):
             if probs:
                 avg = sum(probs) / len(probs)
                 spread = max(probs) - min(probs) if len(probs) > 1 else 0
-                agreement_w = 2.0 * (1 - spread)  # Weight by agreement
+                mm_base = params.get("llm.multi_market_weight_base", 2.0)
+                agreement_w = mm_base * (1 - spread)  # Weight by agreement
                 probability = (probability * total_weight + avg * agreement_w) / (total_weight + agreement_w)
                 total_weight += agreement_w
                 reasoning_parts.append(f"multi_market_avg={avg:.1%} (spread={spread:.1%})")
@@ -59,7 +63,8 @@ class LLMReasonerTool(BasePredictionTool):
                 recent = [h["probability"] for h in history[-5:]]
                 trend = recent[-1] - recent[0]
                 # Slight adjustment in trend direction
-                adjustment = trend * 0.3
+                trend_adj = params.get("llm.trend_adjustment", 0.3)
+                adjustment = trend * trend_adj
                 probability += adjustment
                 reasoning_parts.append(f"trend={'up' if trend > 0 else 'down'} ({trend:+.2f})")
                 signals_used.append("probability_history")
@@ -67,7 +72,8 @@ class LLMReasonerTool(BasePredictionTool):
         # Signal 4: News sentiment
         if "news_sentiment" in signals:
             sentiment = signals["news_sentiment"]  # -1 to 1
-            adjustment = sentiment * 0.1
+            sent_adj = params.get("llm.sentiment_adjustment", 0.1)
+            adjustment = sentiment * sent_adj
             probability += adjustment
             reasoning_parts.append(f"sentiment={sentiment:+.2f}")
             signals_used.append("news_sentiment")

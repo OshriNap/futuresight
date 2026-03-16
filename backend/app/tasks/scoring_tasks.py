@@ -243,14 +243,25 @@ async def build_performance_data() -> dict:
 
 
 async def resolve_and_score() -> dict:
-    """Full pipeline: resolve markets, then score predictions, then build perf data."""
+    """Full pipeline: resolve markets, then score predictions, then build perf data, then evolve."""
     resolution = await resolve_markets()
     scoring = await score_predictions()
     performance = await build_performance_data()
+
+    # Post-scoring: run evolution cycle to evaluate genomes
+    evolution_result = None
+    if scoring.get("scored", 0) > 0:
+        try:
+            from app.tasks.evolution_tasks import run_evolution_cycle
+            evolution_result = await run_evolution_cycle()
+        except Exception as e:
+            logger.warning(f"Evolution cycle failed: {e}")
+            evolution_result = {"error": str(e)}
 
     return {
         "resolution": resolution,
         "scoring": scoring,
         "performance_data": performance,
         "tools_with_data": list(performance.keys()),
+        "evolution": evolution_result,
     }

@@ -29,11 +29,21 @@ DAMPENING_CURVE = {
 }
 
 
-def _dampen(prob: float) -> float:
+def _dampen(prob: float, params: dict | None = None) -> float:
     """Apply dampening to pull extreme probabilities toward 50%."""
-    for (lo, hi), factor in DAMPENING_CURVE.items():
+    params = params or {}
+    # Build curve from genome params with fallback to defaults
+    curve = {
+        (0.0, 0.05): params.get("contrarian.extreme_low", 0.60),
+        (0.05, 0.15): params.get("contrarian.low", 0.75),
+        (0.15, 0.30): params.get("contrarian.moderate_low", 0.90),
+        (0.30, 0.70): params.get("contrarian.neutral", 1.00),
+        (0.70, 0.85): params.get("contrarian.moderate_high", 0.90),
+        (0.85, 0.95): params.get("contrarian.high", 0.75),
+        (0.95, 1.0): params.get("contrarian.extreme_high", 0.60),
+    }
+    for (lo, hi), factor in curve.items():
         if lo <= prob < hi:
-            # Dampen the distance from 0.5
             distance = prob - 0.5
             return 0.5 + distance * factor
     return prob
@@ -50,8 +60,9 @@ class ContrarianTool(BasePredictionTool):
 
     async def predict(self, input: ToolInput) -> ToolOutput:
         market_prob = input.current_signals.get("market_probability", 0.5)
+        params = input.genome_params or {}
 
-        dampened = _dampen(market_prob)
+        dampened = _dampen(market_prob, params)
         adjustment = dampened - market_prob
 
         # Higher confidence when market is extreme (that's where we add most value)

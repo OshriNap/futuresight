@@ -38,15 +38,19 @@ class BaseRateTool(BasePredictionTool):
     best_for = ["geopolitical", "economic", "technology", "general"]
 
     async def predict(self, input: ToolInput) -> ToolOutput:
+        params = input.genome_params or {}
         category = input.category
         current_prob = input.current_signals.get("market_probability", 0.5)
 
-        # Get category base rate
-        yes_rate, efficiency = CATEGORY_RATES.get(category, (0.40, 0.80))
+        # Get category base rate (evolved or default)
+        default_yes, default_eff = CATEGORY_RATES.get(category, (0.40, 0.80))
+        yes_rate = params.get(f"base_rate.{category}_yes_rate", default_yes)
+        efficiency = params.get(f"base_rate.{category}_efficiency", default_eff)
 
         # Weight between base rate and market: less efficient categories get
         # stronger anchoring toward the base rate
-        anchor_weight = BASE_RATE_WEIGHT * (1 - efficiency + 0.2)
+        base_weight = params.get("base_rate.weight", BASE_RATE_WEIGHT)
+        anchor_weight = base_weight * (1 - efficiency + 0.2)
         adjusted = current_prob * (1 - anchor_weight) + yes_rate * anchor_weight
 
         # Clamp

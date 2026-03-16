@@ -20,6 +20,7 @@ class ToolInput:
     historical_data: list[dict] | None = None  # Past similar predictions
     time_horizon: str = "medium"  # short, medium, long
     metadata: dict = field(default_factory=dict)
+    genome_params: dict | None = None  # Evolved parameters from StrategyGenome
 
 
 @dataclass

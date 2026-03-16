@@ -28,6 +28,7 @@ class GraphContextTool(BasePredictionTool):
     best_for = ["geopolitics", "economy", "politics"]
 
     async def predict(self, input: ToolInput) -> ToolOutput:
+        params = input.genome_params or {}
         market_prob = input.current_signals.get("market_probability", 0.5)
         source_id = input.metadata.get("source_id")
 
@@ -122,16 +123,27 @@ class GraphContextTool(BasePredictionTool):
             )
 
         # Compute adjustment from connected events
+        # Build relationship multipliers from genome params
+        rel_mults = {
+            "causes": params.get("graph.causes_mult", REL_MULTIPLIERS.get("causes", 1.0)),
+            "amplifies": params.get("graph.amplifies_mult", REL_MULTIPLIERS.get("amplifies", 0.7)),
+            "correlates": params.get("graph.correlates_mult", REL_MULTIPLIERS.get("correlates", 0.5)),
+            "precedes": params.get("graph.precedes_mult", REL_MULTIPLIERS.get("precedes", 0.3)),
+            "mitigates": params.get("graph.mitigates_mult", REL_MULTIPLIERS.get("mitigates", -0.7)),
+        }
+        resolved_scale = params.get("graph.resolved_scale", 0.1)
+        unresolved_scale = params.get("graph.unresolved_scale", 0.05)
+
         adjustment = 0.0
         evidence_parts = []
 
         for event in connected_events:
-            rel_mult = REL_MULTIPLIERS.get(event["relationship"], 0.3)
+            rel_mult = rel_mults.get(event["relationship"], 0.3)
 
             if event["resolved_outcome"]:
                 # Resolved events give strong signal
                 outcome_val = 1.0 if event["resolved_outcome"] in ("yes",) else -1.0
-                signal = outcome_val * rel_mult * event["strength"] * 0.1
+                signal = outcome_val * rel_mult * event["strength"] * resolved_scale
                 adjustment += signal
                 evidence_parts.append(
                     f"{event['title'][:40]} resolved={event['resolved_outcome']} "
@@ -140,7 +152,7 @@ class GraphContextTool(BasePredictionTool):
             elif event["confidence"] is not None:
                 # Unresolved but with probability — weaker signal
                 # If connected event is likely (>0.7) and "causes" this one, nudge up
-                prob_signal = (event["confidence"] - 0.5) * rel_mult * event["strength"] * 0.05
+                prob_signal = (event["confidence"] - 0.5) * rel_mult * event["strength"] * unresolved_scale
                 adjustment += prob_signal
                 evidence_parts.append(
                     f"{event['title'][:40]} prob={event['confidence']:.0%} "

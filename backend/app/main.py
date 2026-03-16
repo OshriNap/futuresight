@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from app.api import agents, dashboard, evaluation, event_graph, interests, meta, predictions, webhooks
+from app.api import agents, dashboard, evaluation, event_graph, evolution, interests, meta, predictions, webhooks
 from app.database import create_tables
 
 
@@ -38,6 +38,7 @@ app.include_router(event_graph.router, prefix="/api/graph", tags=["event-graph"]
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(meta.router, prefix="/api/meta", tags=["meta-agents"])
 app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])
+app.include_router(evolution.router, prefix="/api/evolution", tags=["evolution"])
 
 
 @app.get("/api/health")

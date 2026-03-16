@@ -68,11 +68,15 @@ class NLITool(BasePredictionTool):
     best_for = ["technology", "geopolitics", "economy", "politics"]
 
     async def predict(self, input: ToolInput) -> ToolOutput:
+        params = input.genome_params or {}
         market_prob = input.current_signals.get("market_probability", 0.5)
 
         # Get matched headlines from embedding matching
         matched_sources = input.current_signals.get("matched_sources", [])
         headlines = [m["title"] for m in matched_sources if m.get("title")]
+
+        headline_cap = int(params.get("nli.headline_cap", 15))
+        headlines = headlines[:headline_cap]
 
         if not headlines:
             return ToolOutput(
@@ -107,8 +111,8 @@ class NLITool(BasePredictionTool):
         net_evidence = avg_support - avg_contradict  # [-1, 1]
 
         # Adjust market probability by evidence
-        # Scale: strong evidence can shift probability by up to ±15%
-        adjustment = net_evidence * 0.15
+        adjustment_scale = params.get("nli.adjustment_scale", 0.15)
+        adjustment = net_evidence * adjustment_scale
         adjusted_prob = max(0.02, min(0.98, market_prob + adjustment))
 
         confidence = min(0.6, 0.2 + n * 0.03)

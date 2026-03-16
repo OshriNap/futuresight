@@ -1,7 +1,8 @@
 """Prediction generation — converts collected sources into scored predictions.
 
 Uses the ToolRegistry to run prediction tools (market_consensus, ensemble, etc.)
-and saves results as Prediction records.
+and saves results as Prediction records. Genome-aware: uses EvolutionEngine to
+assign strategy genomes for A/B testing parameter variants.
 """
 
 import json
@@ -11,7 +12,8 @@ from collections import Counter
 from sqlalchemy import select
 
 from app.database import async_session
-from app.models.meta import PredictionMethod
+from app.models.evolution import GenomePredictionLink
+from app.models.meta import PredictionMethod, PredictionPattern
 from app.models.prediction import Prediction
 from app.models.price_history import PriceSnapshot
 from app.models.source import Source
@@ -47,6 +49,20 @@ async def generate_predictions() -> dict:
         performance_data = await build_performance_data()
     except Exception:
         performance_data = None
+
+    # Load active genomes for A/B testing
+    from app.evolution.engine import evolution_engine
+    try:
+        async with async_session() as setup_db:
+            await evolution_engine.ensure_champion(setup_db)
+            await setup_db.commit()
+        genomes = await evolution_engine.get_active_genomes()
+    except Exception as e:
+        logger.warning(f"Evolution engine unavailable, using defaults: {e}")
+        genomes = []
+
+    # Load validated patterns for post-ensemble adjustment
+    pattern_adjustments = await _load_pattern_adjustments()
 
     created = 0
     updated = 0
@@ -146,7 +162,10 @@ async def generate_predictions() -> dict:
             if source.resolution_date:
                 from datetime import datetime, timezone
                 now = datetime.now(timezone.utc)
-                days_to_resolution = (source.resolution_date - now).days
+                res_date = source.resolution_date
+                if res_date.tzinfo is None:
+                    res_date = res_date.replace(tzinfo=timezone.utc)
+                days_to_resolution = (res_date - now).days
                 if days_to_resolution <= 7:
                     time_horizon = "short"
                 elif days_to_resolution > 90:
@@ -155,12 +174,17 @@ async def generate_predictions() -> dict:
                 # Markets are better calibrated closer to resolution
                 signals["time_decay"] = max(0.0, min(1.0, 1.0 - days_to_resolution / 365))
 
+            # Assign genome for this prediction (A/B testing)
+            genome = evolution_engine.assign_genome(genomes) if genomes else None
+            genome_params = genome.genome_data if genome else None
+
             tool_input = ToolInput(
                 question=source.title,
                 category=category,
                 current_signals=signals,
                 time_horizon=time_horizon,
                 metadata={"source_id": source.id},
+                genome_params=genome_params,
             )
 
             # Select and run tools (using performance feedback when available)
@@ -175,7 +199,13 @@ async def generate_predictions() -> dict:
                 tool_usage[r.tool_name] += 1
 
             # Ensemble the results
-            output = registry.ensemble_prediction(results)
+            output = registry.ensemble_prediction(results, genome_params=genome_params)
+
+            # Apply validated pattern adjustments (post-ensemble correction)
+            if pattern_adjustments:
+                output.probability = _apply_patterns(
+                    output.probability, category, time_horizon, pattern_adjustments,
+                )
 
             # Build data_signals with source info
             data_signals = output.metadata.get("data_signals", {})
@@ -186,6 +216,9 @@ async def generate_predictions() -> dict:
                 "reliability": 0.5,
                 "article_count": 1,
             }]
+            if genome:
+                data_signals["genome_id"] = str(genome.id)
+                data_signals["genome_generation"] = genome.generation
 
             if pred:
                 # Update existing prediction
@@ -207,6 +240,15 @@ async def generate_predictions() -> dict:
                 )
                 db.add(pred)
                 created += 1
+
+            # Link prediction to genome for scoring
+            if genome and pred:
+                await db.flush()  # Ensure pred.id exists
+                link = GenomePredictionLink(
+                    genome_id=genome.id,
+                    prediction_id=pred.id,
+                )
+                db.add(link)
 
         # Update PredictionMethod usage counts
         for tool_name, count in tool_usage.items():
@@ -354,3 +396,71 @@ def _guess_category(title: str) -> str:
     if any(w in lower for w in ["gdp", "inflation", "fed", "interest rate", "recession", "economy"]):
         return "economy"
     return "general"
+
+
+async def _load_pattern_adjustments() -> list[dict]:
+    """Load validated patterns from the pattern library for post-ensemble correction."""
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(PredictionPattern).where(PredictionPattern.status == "validated")
+            )
+            patterns = result.scalars().all()
+            return [
+                {
+                    "pattern_type": p.pattern_type,
+                    "condition": p.condition or {},
+                    "accuracy": p.accuracy or 0.5,
+                    "avg_impact": p.avg_impact or 0.0,
+                    "category": p.category,
+                }
+                for p in patterns
+                if p.avg_impact and p.accuracy and p.accuracy > 0.55
+            ]
+    except Exception as e:
+        logger.warning(f"Failed to load pattern adjustments: {e}")
+        return []
+
+
+def _apply_patterns(
+    probability: float,
+    category: str,
+    time_horizon: str,
+    patterns: list[dict],
+) -> float:
+    """Apply validated pattern adjustments to post-ensemble probability.
+
+    Each pattern contributes: avg_impact * accuracy * 0.5, capped at ±10% total.
+    """
+    total_adjustment = 0.0
+
+    for p in patterns:
+        # Skip patterns that don't match this category (unless global)
+        if p["category"] and p["category"] != category:
+            continue
+
+        condition = p["condition"]
+        ptype = p["pattern_type"]
+
+        # calibration patterns: apply to matching time horizons
+        if ptype == "calibration":
+            if condition.get("time_horizon") and condition["time_horizon"] != time_horizon:
+                continue
+            adj = p["avg_impact"] * p["accuracy"] * 0.5
+            total_adjustment += adj
+
+        # category_bias: always applies for matching category
+        elif ptype == "category_bias":
+            adj = p["avg_impact"] * p["accuracy"] * 0.5
+            total_adjustment += adj
+
+        # signal_pattern and tool_interaction: apply conservatively
+        elif ptype in ("signal_pattern", "tool_interaction"):
+            adj = p["avg_impact"] * p["accuracy"] * 0.5
+            total_adjustment += adj
+
+    # Cap total adjustment at ±10%
+    total_adjustment = max(-0.10, min(0.10, total_adjustment))
+
+    adjusted = max(0.02, min(0.98, probability + total_adjustment))
+    return adjusted
