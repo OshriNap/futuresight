@@ -1,6 +1,7 @@
 """API endpoints for meta-agent data: scratchpads, source reliability, methods."""
 
 import uuid
+import uuid as uuid_mod
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -17,6 +18,8 @@ from app.models.meta import (
     Scratchpad,
     SourceReliability,
 )
+from app.models.indicator import Indicator
+from app.models.insight import Insight
 from app.models.prediction import Prediction, PredictionScore
 from app.models.source import Source
 
@@ -499,6 +502,14 @@ async def run_full_pipeline():
     from app.tasks.collection_tasks import collect_all
     results["collection"] = await collect_all()
 
+    # Collect indicators
+    try:
+        from app.tasks.indicator_tasks import collect_indicators
+        indicator_result = await collect_indicators()
+        results["indicators"] = indicator_result
+    except Exception as e:
+        results["indicators"] = {"error": str(e)}
+
     from app.tasks.categorization_tasks import categorize_sources
     results["categorization"] = await categorize_sources()
 
@@ -526,3 +537,151 @@ async def trigger_sentiment(
     from app.tasks.sentiment_tasks import analyze_sentiment
     result = await analyze_sentiment(platform=platform, force=force)
     return {"status": "completed", "result": result}
+
+
+@router.get("/insight-context/{interest_id}")
+async def get_insight_context(interest_id: str, db: AsyncSession = Depends(get_db)):
+    """Gather all data for an interest domain — used by Claude Code to generate insights."""
+    from app.models.user_interest import UserInterest
+    from app.models.source import Source
+
+    interest = await db.get(UserInterest, uuid_mod.UUID(interest_id))
+    if not interest:
+        raise HTTPException(status_code=404, detail="Interest not found")
+
+    # Recent indicators for this interest's series
+    indicator_ids = []
+    for spec in interest.indicators or []:
+        if ":" in spec:
+            _, series_id = spec.split(":", 1)
+            indicator_ids.append(series_id)
+
+    indicators_q = await db.execute(
+        select(Indicator)
+        .where(Indicator.series_id.in_(indicator_ids) if indicator_ids else Indicator.id.is_(None))
+        .order_by(Indicator.release_date.desc())
+        .limit(50)
+    )
+    indicators = indicators_q.scalars().all()
+
+    # Recent market sources matching this interest
+    keywords = interest.keywords or []
+    market_filters = interest.market_filters or []
+    search_terms = keywords + market_filters
+
+    market_sources = []
+    if search_terms:
+        all_sources_q = await db.execute(
+            select(Source)
+            .where(Source.signal_type == "market_probability")
+            .order_by(Source.updated_at.desc())
+            .limit(500)
+        )
+        all_sources = all_sources_q.scalars().all()
+        for s in all_sources:
+            title_lower = (s.title or "").lower()
+            if any(term.lower() in title_lower for term in search_terms):
+                market_sources.append(s)
+                if len(market_sources) >= 20:
+                    break
+
+    # Recent news sources
+    news_sources = []
+    if search_terms:
+        news_q = await db.execute(
+            select(Source)
+            .where(Source.signal_type.in_(["news", "engagement"]))
+            .order_by(Source.updated_at.desc())
+            .limit(500)
+        )
+        all_news = news_q.scalars().all()
+        for s in all_news:
+            title_lower = (s.title or "").lower()
+            if any(term.lower() in title_lower for term in search_terms):
+                news_sources.append(s)
+                if len(news_sources) >= 20:
+                    break
+
+    # Previous insights for context
+    prev_insights_q = await db.execute(
+        select(Insight)
+        .where(Insight.domain == (interest.category or interest.name))
+        .order_by(Insight.created_at.desc())
+        .limit(3)
+    )
+    prev_insights = prev_insights_q.scalars().all()
+
+    return {
+        "interest": {
+            "id": str(interest.id),
+            "name": interest.name,
+            "category": interest.category,
+            "region": interest.region,
+            "keywords": interest.keywords,
+        },
+        "indicators": [
+            {"series_id": i.series_id, "name": i.name, "value": i.value, "unit": i.unit, "period": i.period, "agency": i.source_agency}
+            for i in indicators
+        ],
+        "market_sources": [
+            {"id": str(s.id), "title": s.title, "platform": s.platform, "probability": s.current_market_probability, "category": s.category}
+            for s in market_sources
+        ],
+        "news_sources": [
+            {"id": str(s.id), "title": s.title, "platform": s.platform, "sentiment": (s.raw_data or {}).get("sentiment")}
+            for s in news_sources
+        ],
+        "previous_insights": [
+            {"title": i.title, "created_at": str(i.created_at), "stale": i.stale, "ground_truth": i.ground_truth[:200]}
+            for i in prev_insights
+        ],
+    }
+
+
+@router.post("/collect-indicators")
+async def trigger_collect_indicators():
+    """Trigger indicator collection from government sources."""
+    from app.tasks.indicator_tasks import collect_indicators
+    result = await collect_indicators()
+    return {"status": "ok", "results": result}
+
+
+@router.post("/generate-insights")
+async def trigger_generate_insights(db: AsyncSession = Depends(get_db)):
+    """Convenience trigger for insight generation."""
+    from app.models.user_interest import UserInterest
+
+    result = await db.execute(
+        select(UserInterest).where(UserInterest.enabled.is_(True))
+    )
+    interests = result.scalars().all()
+
+    contexts = {}
+    for interest in interests:
+        domain = interest.category or interest.name
+        indicator_ids = []
+        for spec in interest.indicators or []:
+            if ":" in spec:
+                _, series_id = spec.split(":", 1)
+                indicator_ids.append(series_id)
+
+        ind_q = await db.execute(
+            select(Indicator)
+            .where(Indicator.series_id.in_(indicator_ids) if indicator_ids else Indicator.id.is_(None))
+            .order_by(Indicator.release_date.desc())
+            .limit(20)
+        )
+        indicators = ind_q.scalars().all()
+
+        contexts[domain] = {
+            "interest_id": str(interest.id),
+            "interest_name": interest.name,
+            "region": interest.region,
+            "indicator_count": len(indicators),
+            "latest_indicators": [
+                {"series_id": i.series_id, "name": i.name, "value": i.value, "period": i.period}
+                for i in indicators[:5]
+            ],
+        }
+
+    return {"status": "ok", "domains": contexts}
