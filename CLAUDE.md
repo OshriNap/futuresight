@@ -9,14 +9,29 @@ Multi-agent prediction platform that aggregates data from prediction markets, ne
 - **GPU**: RTX 2060 SUPER 8GB — sentiment, NLI, embeddings (3 models, ~830MB VRAM)
 - **Intelligence Layer**: Claude Code scheduled tasks (all thinking/analysis)
 
+### Indicator Intelligence Layer
+- **Indicator Model** — stores time-series economic data from government/institutional sources (FRED, CBS Israel, World Bank); each row is one data point for one series
+- **Insight Model** — structured four-layer analysis tied to a `UserInterest`; layers are `ground_truth`, `trend_analysis`, `prediction`, and `action_items`
+- **UserInterest as Control Plane** — the `UserInterest` table drives both market collection and indicator collection via JSON fields: `indicators` (list of series to track), `market_filters` (keyword/category filters for prediction markets), `region` (geographic scope), and `enabled` (active flag)
+
 ## GPU Models (all lazy-loaded, stay in VRAM)
 - `cardiffnlp/twitter-roberta-base-sentiment-latest` (~500MB) — sentiment analysis
 - `all-MiniLM-L6-v2` (~80MB) — sentence embeddings for cross-source matching
 - `cross-encoder/nli-distilroberta-base` (~250MB) — NLI evidence scoring
 
 ## Prediction Pipeline
+
+The platform runs two parallel tracks that feed a unified intelligence layer:
+
 ```
-collect (4 sources) → sentiment (GPU) → match (GPU embeddings) → graph → predict (8 tools) → score
+Track 1 — Market/News:
+  collect (4 sources) → sentiment (GPU) → match (GPU embeddings) → graph → predict (8 tools) → score
+
+Track 2 — Indicators:
+  collect-indicators (FRED / CBS_IL / WORLD_BANK) → Indicator table → generate-insights → Insight table
+
+Intelligence layer (Claude Code):
+  insight-context/{interest_id} → [Claude reasoning] → POST /api/insights/
 ```
 
 ### Data Sources (signal_type field)
@@ -24,6 +39,9 @@ collect (4 sources) → sentiment (GPU) → match (GPU embeddings) → graph →
 - **Manifold Markets** — `market_probability` (community prediction markets)
 - **GDELT** — `news` (global news articles, no probability)
 - **Reddit** — `engagement` (social posts, no probability)
+- **FRED** — `indicator` (US economic indicators — requires `FRED_API_KEY` env var)
+- **CBS_IL** — `indicator` (Israeli economic indicators — public API, no key needed)
+- **WORLD_BANK** — `indicator` (global economic indicators — public API, no key needed)
 
 ### 8 Prediction Tools (ToolRegistry)
 - `market_consensus` — market probability baseline
@@ -58,6 +76,18 @@ Scheduled tasks interact with the system via REST API (`http://localhost:8000/ap
 - `POST /api/meta/score-predictions` - Resolve markets and score
 - `POST /api/meta/generate-predictions` - Generate/update predictions
 - `POST /api/meta/build-graph` - Build event causality graph
+- `POST /api/meta/collect-indicators` - Trigger indicator collection for all active interests
+- `POST /api/meta/generate-insights` - Trigger insight generation (calls Claude Code reasoning)
+- `GET /api/meta/insight-context/{interest_id}` - Full context bundle for Claude Code reasoning (indicators, recent news, market signals, prior insights)
+
+Additional API routers:
+- `GET /api/indicators/` - List available indicator series
+- `GET /api/indicators/{series_id}/history` - Time-series data for a specific indicator
+- `GET /api/insights/` - List insights (filterable by interest)
+- `POST /api/insights/` - Create a new layered insight
+- `GET /api/insights/{id}` - Retrieve a specific insight
+- `PUT /api/insights/{id}` - Update an insight
+- `DELETE /api/insights/{id}` - Delete an insight
 
 ## Development
 ```bash
@@ -69,15 +99,18 @@ cd frontend && npm install && cd ..
 # Dashboard: http://<server-ip>:8000/  (HTML single-page app)
 # API docs: http://<server-ip>:8000/docs
 # Next.js: http://localhost:3000
+
+# Seed default interests (creates UserInterest rows with indicator/market config)
+cd backend && python -m app.seed_interests
 ```
 
 ## Project Structure
-- `backend/app/models/` - SQLAlchemy models (Source, Prediction, PredictionScore, Agent, UserInterest, EventNode, EventEdge)
-- `backend/app/api/` - FastAPI routers (dashboard, meta, predictions, event_graph, interests)
-- `backend/app/agents/collector/` - Data collectors (Polymarket, Manifold, GDELT, Reddit)
+- `backend/app/models/` - SQLAlchemy models (Source, Prediction, PredictionScore, Agent, UserInterest, EventNode, EventEdge, Indicator, Insight)
+- `backend/app/api/` - FastAPI routers (dashboard, meta, predictions, event_graph, interests, indicators, insights)
+- `backend/app/agents/collector/` - Data collectors (Polymarket, Manifold, GDELT, Reddit, FRED, CBS_IL, WorldBank)
 - `backend/app/agents/meta/` - Simplified meta-agents (DB operations only)
 - `backend/app/tools/` - 8 prediction tools + evaluation framework (loss functions, comparator, experiments)
-- `backend/app/tasks/` - Async tasks (collection, sentiment, embedding, prediction, scoring, graph, meta)
+- `backend/app/tasks/` - Async tasks (collection, sentiment, embedding, prediction, scoring, graph, meta, indicators, insights)
 - `frontend/src/app/` - Next.js pages (dashboard, predictions, accuracy, agents, graph, interests)
 - `.claude/skills/` - Claude Code skills (analyze-sentiment)
 
@@ -91,3 +124,5 @@ cd frontend && npm install && cd ..
 - JSON mutation tracking: use `flag_modified()` when updating `raw_data` dicts
 - Tables are auto-created on startup (no Alembic needed for SQLite dev)
 - `Source` has unique constraint on (platform, external_id)
+- `UserInterest.indicators` is a JSON list of series IDs to collect; `UserInterest.market_filters` is a JSON object with keyword/category rules; `UserInterest.region` scopes geographic sources; `UserInterest.enabled` gates all collection for that interest
+- `Insight` rows are keyed to a `UserInterest` and contain four JSON fields: `ground_truth`, `trend_analysis`, `prediction`, `action_items` — always written by Claude Code via the insights API
