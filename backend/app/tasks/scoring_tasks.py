@@ -131,10 +131,38 @@ async def resolve_markets() -> dict:
                 source.actual_outcome = actual_outcome
                 resolved_count += 1
 
+        # Auto-resolve expired markets using last known market probability
+        expired_result = await db.execute(
+            select(Source)
+            .where(Source.signal_type == "market_probability")
+            .where(Source.resolved_at.is_(None))
+            .where(Source.resolution_date.isnot(None))
+            .where(Source.resolution_date < datetime.now(timezone.utc))
+        )
+        expired = expired_result.scalars().all()
+        expired_resolved = 0
+
+        for source in expired:
+            prob = source.current_market_probability
+            if prob is None:
+                continue
+            # Use last known probability: >=0.5 → yes, <0.5 → no
+            source.actual_outcome = "yes" if prob >= 0.5 else "no"
+            source.resolved_at = datetime.now(timezone.utc)
+            # Tag as auto-resolved in raw_data
+            raw = dict(source.raw_data or {})
+            raw["auto_resolved"] = True
+            raw["auto_resolved_probability"] = prob
+            source.raw_data = raw
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(source, "raw_data")
+            expired_resolved += 1
+            resolved_count += 1
+
         await db.commit()
 
-    logger.info(f"Resolution check: checked={checked}, resolved={resolved_count}")
-    return {"checked": checked, "resolved": resolved_count}
+    logger.info(f"Resolution check: checked={checked}, resolved={resolved_count}, expired_auto={expired_resolved}")
+    return {"checked": checked, "resolved": resolved_count, "expired_auto_resolved": expired_resolved}
 
 
 async def score_predictions() -> dict:
@@ -239,7 +267,36 @@ async def build_performance_data() -> dict:
             "count": len(scores),
         }
 
+    # Sync prediction_methods table with actual usage and accuracy
+    await _sync_method_stats(tool_scores)
+
     return performance_data
+
+
+async def _sync_method_stats(tool_briers: dict[str, list[float]]):
+    """Update prediction_methods table with real usage counts and accuracy from scored data."""
+    from collections import Counter
+
+    async with async_session() as db:
+        # Count total uses per tool from all predictions
+        result = await db.execute(select(Prediction.data_signals))
+        tool_uses: Counter = Counter()
+        for (ds,) in result.all():
+            for t in (ds or {}).get("tools_used", []):
+                tool_uses[t] += 1
+
+        # Update each method
+        from app.models.meta import PredictionMethod
+        methods = await db.execute(select(PredictionMethod))
+        for method in methods.scalars().all():
+            method.total_uses = tool_uses.get(method.name, 0)
+            if method.name in tool_briers and tool_briers[method.name]:
+                avg_brier = sum(tool_briers[method.name]) / len(tool_briers[method.name])
+                method.avg_accuracy = round(1 - avg_brier, 4)
+
+        await db.commit()
+
+    logger.info(f"Synced method stats for {len(tool_uses)} tools")
 
 
 async def resolve_and_score() -> dict:

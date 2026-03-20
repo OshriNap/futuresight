@@ -93,16 +93,27 @@ def _match_score(text: str, keywords: list[str]) -> int:
 
 
 def _detect_event_type(title: str, category: str | None) -> str:
-    if category:
-        return TYPE_MAP.get(category, "social")
+    # Try mapped category first, but skip slugs that aren't real categories
+    if category and category in TYPE_MAP:
+        return TYPE_MAP[category]
+    # Keyword-based detection
     lower = title.lower()
-    if any(w in lower for w in ["war", "invasion", "military", "nato", "sanction", "attack", "nuclear", "missile"]):
+    if any(w in lower for w in ["war", "invasion", "military", "nato", "sanction", "attack",
+                                 "nuclear", "missile", "ceasefire", "troops", "iran", "russia",
+                                 "ukraine", "china", "taiwan", "putin", "zelenskyy", "regime"]):
         return "geopolitical"
-    if any(w in lower for w in ["gdp", "inflation", "economy", "fed", "trade", "tariff", "recession"]):
+    if any(w in lower for w in ["election", "vote", "senate", "governor", "president",
+                                 "democrat", "republican", "nominee", "congress", "parliament"]):
+        return "geopolitical"
+    if any(w in lower for w in ["gdp", "inflation", "economy", "fed", "trade", "tariff",
+                                 "recession", "interest rate", "market cap", "stock", "bitcoin",
+                                 "ethereum", "crypto", "ipo", "price", "currency", "bond"]):
         return "economic"
-    if any(w in lower for w in ["ai", "tech", "software", "cyber", "chip", "quantum"]):
+    if any(w in lower for w in ["ai", "tech", "software", "cyber", "chip", "quantum",
+                                 "openai", "google", "apple", "semiconductor", "llm", "robot"]):
         return "tech"
-    if any(w in lower for w in ["climate", "emissions", "hurricane", "wildfire", "carbon"]):
+    if any(w in lower for w in ["climate", "emissions", "hurricane", "wildfire", "carbon",
+                                 "temperature", "weather", "drought", "flood", "sea level"]):
         return "environmental"
     return "social"
 
@@ -121,10 +132,10 @@ async def build_event_graph() -> dict:
 
         poly_sources = await db.execute(
             select(Source)
-            .where(Source.platform == "polymarket")
+            .where(Source.platform.in_(["polymarket", "manifold"]))
             .where(Source.current_market_probability.isnot(None))
             .order_by(Source.updated_at.desc())
-            .limit(150)
+            .limit(200)
         )
 
         news_sources = await db.execute(
@@ -213,17 +224,17 @@ async def build_event_graph() -> dict:
                     if (src_node.id, tgt_node.id) in existing_edge_pairs:
                         continue
 
-                    # Require combined score of at least 3 (strong match)
+                    # Require combined score of at least 2
                     combined = src_score + tgt_score
-                    if combined < 3:
+                    if combined < 2:
                         continue
 
                     # Additional check: nodes should share some topical terms
                     src_terms = _extract_terms(src_node.title)
                     tgt_terms = _extract_terms(tgt_node.title)
                     shared = src_terms & tgt_terms
-                    # Either share terms OR both strongly match the pattern
-                    if not shared and combined < 4:
+                    # Either share terms OR strongly match the pattern
+                    if not shared and combined < 3:
                         continue
 
                     strength = min(0.9, 0.3 + combined * 0.1 + len(shared) * 0.05)

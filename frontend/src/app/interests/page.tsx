@@ -73,7 +73,7 @@ export default function InterestsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.50.114";
         const res = await fetch(`${API_BASE}/api/interests`);
         if (res.ok) {
           const data = await res.json();

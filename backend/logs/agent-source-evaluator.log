@@ -1,0 +1,16 @@
+Source evaluation complete. Analysis posted to scratchpad.
+
+**Summary:**
+
+| Platform | Reliability | Sources | Notes |
+|----------|------------|---------|-------|
+| Polymarket | **0.79** | 541 | Only platform with real scored data |
+| Manifold | 0.50 (default) | 214 | Smallest pool, needs more collection |
+| GDELT | 0.50 (default) | 553 | News signal, no market probabilities |
+| Reddit | 0.50 (default) | 700 | Engagement only, highest volume |
+
+**System:** 2,008 sources, 531 predictions, 37 scored (7%), avg Brier 0.2114
+
+**Top bottleneck:** Only 7% of predictions have been scored — this blocks meaningful reliability differentiation for 3 of 4 platforms. Increasing scoring frequency is the highest-leverage action.
+/bin/sh: 1: claude: not found
+/bin/sh: 1: claude: not found

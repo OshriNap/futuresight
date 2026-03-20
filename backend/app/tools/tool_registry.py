@@ -107,8 +107,21 @@ class ToolRegistry:
         # Sort by score descending
         candidates.sort(key=lambda x: x[1], reverse=True)
 
-        # Return top tools (at least 2, up to 4)
-        selected = [name for name, _ in candidates[:4]]
+        # Ensure diversity: pick best from each tool_type, then fill remaining slots
+        selected = []
+        selected_types = set()
+        # First pass: best tool per type
+        for name, score in candidates:
+            tool = self._tools[name]
+            if tool.tool_type not in selected_types:
+                selected.append(name)
+                selected_types.add(tool.tool_type)
+
+        # Second pass: fill up to 7 with remaining highest-scored
+        for name, score in candidates:
+            if name not in selected and len(selected) < 7:
+                selected.append(name)
+
         if not selected:
             selected = ["market_consensus"]  # fallback
 

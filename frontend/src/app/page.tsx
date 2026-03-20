@@ -19,6 +19,8 @@ interface DashboardData {
   total_agents: number;
   avg_brier_score: number | null;
   predictions_by_horizon: Record<string, number>;
+  total_event_nodes: number;
+  total_event_edges: number;
 }
 
 interface SentimentData {
@@ -30,7 +32,7 @@ interface SentimentData {
   by_platform: Record<string, { total: number; scored: number }>;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.50.114";
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<SystemStats | null>(null);

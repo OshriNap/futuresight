@@ -1,0 +1,30 @@
+Analysis posted to scratchpad. Here's the summary:
+
+## Feature Ideator Report — 2026-03-18
+
+### System Health
+| Metric | Value | Status |
+|--------|-------|--------|
+| Sources | 2,008 across 4 platforms | OK |
+| Predictions | 531 (37 scored) | Scoring bottleneck |
+| Brier Score | 0.2114 | Decent baseline |
+| Sentiment | 71% coverage | Improvable |
+| Graph | 16% connected | Weak |
+
+### Top 5 Gaps (by priority)
+
+1. **Scoring feedback loop is too thin** — Only 7% of predictions scored. The tool-weighting system can't learn. Increase scoring frequency to every 2h.
+
+2. **72% of markets uncategorized** — 541 markets have no category, and "health" is entirely missing. Use Ollama to auto-classify market titles.
+
+3. **GDELT & Reddit 25h stale** — Both non-market sources stopped updating. Market sources are fine. Need to investigate collector failures and add freshness alerts.
+
+4. **Graph 84% disconnected** — 938 isolated nodes. Add embedding-similarity edges (cosine > 0.7) using existing MiniLM model to boost connectivity.
+
+5. **29% of sources lack sentiment** — Run sentiment immediately after collection instead of on a separate schedule.
+
+### Recommended Priority
+**Scoring frequency > Auto-categorization > Graph connectivity > Freshness alerting**
+
+The scoring loop is the single most impactful fix — without it, the system can't learn which prediction tools work best.
+/bin/sh: 1: claude: not found

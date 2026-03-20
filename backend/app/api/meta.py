@@ -13,6 +13,7 @@ from app.models.meta import (
     FeatureImportance,
     MetaAgentRun,
     PredictionMethod,
+    PredictionPattern,
     Scratchpad,
     SourceReliability,
 )
@@ -104,6 +105,78 @@ async def update_scratchpad_status(
     entry.status = status
     await db.commit()
     return {"status": "updated"}
+
+
+@router.post("/scratchpad/digest")
+async def digest_scratchpad(
+    max_age_days: int = Query(default=7, ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive old scratchpad entries into a rolling digest.
+
+    Compresses entries older than max_age_days into a summary entry per agent_type,
+    then archives the originals. Inspired by openevolve's meta-analysis digest.
+    """
+    from datetime import timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+
+    result = await db.execute(
+        select(Scratchpad)
+        .where(Scratchpad.status == "active")
+        .where(Scratchpad.created_at < cutoff)
+        .order_by(Scratchpad.agent_type, Scratchpad.created_at.asc())
+    )
+    old_entries = result.scalars().all()
+
+    if not old_entries:
+        return {"status": "no_entries_to_digest", "archived": 0, "digests_created": 0}
+
+    # Group by agent_type
+    by_agent: dict[str, list] = {}
+    for entry in old_entries:
+        by_agent.setdefault(entry.agent_type, []).append(entry)
+
+    digests_created = 0
+    archived = 0
+
+    for agent_type, entries in by_agent.items():
+        # Build digest content
+        lines = []
+        categories = set()
+        all_tags = set()
+        for e in entries:
+            lines.append(f"- [{e.category}/{e.priority}] {e.title}: {e.content[:200]}")
+            categories.add(e.category)
+            if e.tags:
+                all_tags.update(e.tags)
+
+        digest = Scratchpad(
+            agent_type=agent_type,
+            title=f"Digest: {len(entries)} entries from {agent_type} (before {cutoff.strftime('%Y-%m-%d')})",
+            content="\n".join(lines),
+            category="digest",
+            priority="low",
+            tags=sorted(all_tags)[:20],
+            extra_data={
+                "original_count": len(entries),
+                "categories": sorted(categories),
+                "date_range": {
+                    "from": entries[0].created_at.isoformat() if entries[0].created_at else None,
+                    "to": entries[-1].created_at.isoformat() if entries[-1].created_at else None,
+                },
+            },
+        )
+        db.add(digest)
+        digests_created += 1
+
+        # Archive originals
+        for e in entries:
+            e.status = "archived"
+            archived += 1
+
+    await db.commit()
+    return {"status": "completed", "archived": archived, "digests_created": digests_created}
 
 
 # --- Source Reliability ---
@@ -243,12 +316,83 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
     }
 
 
+# --- Pattern Library ---
+
+@router.get("/patterns")
+async def list_patterns(
+    status: str | None = None,
+    pattern_type: str | None = None,
+    category: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """List prediction patterns from the pattern library."""
+    query = select(PredictionPattern).order_by(PredictionPattern.updated_at.desc())
+    if status:
+        query = query.where(PredictionPattern.status == status)
+    if pattern_type:
+        query = query.where(PredictionPattern.pattern_type == pattern_type)
+    if category:
+        query = query.where(PredictionPattern.category == category)
+    result = await db.execute(query)
+    patterns = result.scalars().all()
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "pattern_type": p.pattern_type,
+            "description": p.description,
+            "condition": p.condition,
+            "times_seen": p.times_seen,
+            "times_correct": p.times_correct,
+            "accuracy": round(p.accuracy, 3) if p.accuracy else None,
+            "avg_impact": round(p.avg_impact, 4) if p.avg_impact else None,
+            "status": p.status,
+            "category": p.category,
+            "version": p.version,
+            "discovered_by": p.discovered_by,
+            "validated_at": p.validated_at.isoformat() if p.validated_at else None,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        }
+        for p in patterns
+    ]
+
+
+@router.get("/patterns/summary")
+async def patterns_summary(db: AsyncSession = Depends(get_db)):
+    """Summary stats for the pattern library."""
+    total = (await db.execute(select(func.count(PredictionPattern.id)))).scalar() or 0
+    validated = (await db.execute(
+        select(func.count(PredictionPattern.id)).where(PredictionPattern.status == "validated")
+    )).scalar() or 0
+    candidate = (await db.execute(
+        select(func.count(PredictionPattern.id)).where(PredictionPattern.status == "candidate")
+    )).scalar() or 0
+    rejected = (await db.execute(
+        select(func.count(PredictionPattern.id)).where(PredictionPattern.status == "rejected")
+    )).scalar() or 0
+
+    by_type = await db.execute(
+        select(PredictionPattern.pattern_type, func.count(PredictionPattern.id))
+        .group_by(PredictionPattern.pattern_type)
+    )
+
+    return {
+        "total": total,
+        "validated": validated,
+        "candidate": candidate,
+        "rejected": rejected,
+        "by_type": {t: c for t, c in by_type.all()},
+    }
+
+
 # --- Trigger Meta Agents ---
 
 @router.post("/trigger/{agent_type}")
 async def trigger_meta_agent(agent_type: str):
     """Manually trigger a meta-agent run (simplified DB-only version)."""
     from app.tasks.meta_tasks import (
+        run_feature_ideator,
         run_method_researcher,
         run_source_evaluator,
         run_strategy_optimizer,
@@ -258,6 +402,7 @@ async def trigger_meta_agent(agent_type: str):
         "source_evaluator": run_source_evaluator,
         "strategy_optimizer": run_strategy_optimizer,
         "method_researcher": run_method_researcher,
+        "feature_ideator": run_feature_ideator,
     }
     task_fn = task_map.get(agent_type)
     if not task_fn:
@@ -319,6 +464,14 @@ async def trigger_matching():
     return {"status": "completed", "result": result}
 
 
+@router.post("/categorize")
+async def trigger_categorization(limit: int = 0):
+    """Categorize uncategorized market sources using Ollama LLM."""
+    from app.tasks.categorization_tasks import categorize_sources
+    result = await categorize_sources(limit=limit)
+    return {"status": "completed", "result": result}
+
+
 @router.post("/score-predictions")
 async def trigger_scoring():
     """Resolve markets and score predictions against actual outcomes."""
@@ -345,6 +498,9 @@ async def run_full_pipeline():
 
     from app.tasks.collection_tasks import collect_all
     results["collection"] = await collect_all()
+
+    from app.tasks.categorization_tasks import categorize_sources
+    results["categorization"] = await categorize_sources()
 
     from app.tasks.embedding_tasks import match_sources
     results["matching"] = await match_sources()

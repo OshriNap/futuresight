@@ -21,8 +21,8 @@ from app.evolution.defaults import DEFAULT_GENOME, MUTATION_RANGES
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5-coder:7b"
+OLLAMA_URL = "http://192.168.50.114:11434/api/generate"
+OLLAMA_MODEL = "qwen2.5:7b"
 TIMEOUT = 60  # seconds
 
 

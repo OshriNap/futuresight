@@ -193,7 +193,7 @@ export default function PredictionsPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.50.114";
         const params = new URLSearchParams();
         if (timeHorizon !== "all") params.set("time_horizon", timeHorizon);
         const query = params.toString();

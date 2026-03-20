@@ -88,6 +88,81 @@ async def get_prediction_history(prediction_id: uuid.UUID, db: AsyncSession = De
     ]
 
 
+@router.get("/{prediction_id}/counterfactual")
+async def get_counterfactual(prediction_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Counterfactual analysis: what if we dropped or reweighted each tool?
+
+    Uses stored tool_outputs from data_signals to recompute the ensemble
+    with each tool removed, showing each tool's marginal contribution.
+    """
+    import math
+
+    result = await db.execute(select(Prediction).where(Prediction.id == prediction_id))
+    prediction = result.scalar_one_or_none()
+    if not prediction:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Prediction not found")
+
+    ds = prediction.data_signals or {}
+    tool_outputs = ds.get("tool_outputs", {})
+    ensemble_prob = ds.get("ensemble_probability", prediction.confidence)
+
+    if not tool_outputs:
+        return {
+            "prediction_id": str(prediction_id),
+            "ensemble_probability": ensemble_prob,
+            "counterfactuals": [],
+            "message": "No per-tool outputs stored (prediction made before counterfactual tracking)"
+        }
+
+    # Recompute ensemble without each tool (log-linear pooling)
+    def log_linear_ensemble(tools: dict) -> float:
+        if not tools:
+            return 0.5
+        total_w = sum(t["weight"] for t in tools.values())
+        if total_w == 0:
+            return 0.5
+        log_odds = 0.0
+        for t in tools.values():
+            p = max(0.01, min(0.99, t["probability"]))
+            log_odds += (t["weight"] / total_w) * math.log(p / (1 - p))
+        return max(0.02, min(0.98, 1.0 / (1.0 + math.exp(-log_odds))))
+
+    full_prob = log_linear_ensemble(tool_outputs)
+
+    counterfactuals = []
+    for tool_name, tool_data in tool_outputs.items():
+        # Without this tool
+        without = {k: v for k, v in tool_outputs.items() if k != tool_name}
+        without_prob = log_linear_ensemble(without)
+        shift = ensemble_prob - without_prob
+
+        # With only this tool
+        solo_prob = tool_data["probability"]
+
+        counterfactuals.append({
+            "tool": tool_name,
+            "tool_probability": tool_data["probability"],
+            "tool_confidence": tool_data["confidence"],
+            "tool_weight": tool_data["weight"],
+            "without_tool": round(without_prob, 4),
+            "shift": round(shift, 4),  # positive = tool pushes probability up
+            "direction": "pushes up" if shift > 0.01 else "pushes down" if shift < -0.01 else "minimal impact",
+            "signals_used": tool_data.get("signals_used", []),
+        })
+
+    # Sort by absolute impact
+    counterfactuals.sort(key=lambda x: abs(x["shift"]), reverse=True)
+
+    return {
+        "prediction_id": str(prediction_id),
+        "prediction_text": prediction.prediction_text,
+        "ensemble_probability": ensemble_prob,
+        "recomputed_probability": round(full_prob, 4),
+        "counterfactuals": counterfactuals,
+    }
+
+
 @router.post("/", response_model=PredictionResponse, status_code=201)
 async def create_prediction(data: PredictionCreate, db: AsyncSession = Depends(get_db)):
     prediction = Prediction(**data.model_dump())

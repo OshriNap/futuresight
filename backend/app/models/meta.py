@@ -71,6 +71,33 @@ class FeatureImportance(Base):
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PredictionPattern(Base):
+    """Persistent pattern library — validated patterns that persist across prediction runs.
+
+    Inspired by openevolve's MetaPatternLibrary. Stores patterns like
+    "sentiment divergence > 0.15 predicts market correction" with validation stats.
+    """
+    __tablename__ = "prediction_patterns"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(300))
+    pattern_type: Mapped[str] = mapped_column(String(50))  # signal_pattern, calibration, tool_interaction, category_bias
+    description: Mapped[str] = mapped_column(Text)
+    condition: Mapped[dict] = mapped_column(JSON)  # Machine-readable pattern definition
+    # e.g. {"type": "sentiment_divergence", "threshold": 0.15, "direction": "above", "signal": "correction"}
+    times_seen: Mapped[int] = mapped_column(Integer, default=0)
+    times_correct: Mapped[int] = mapped_column(Integer, default=0)
+    accuracy: Mapped[float | None] = mapped_column(Float)  # times_correct / times_seen
+    avg_impact: Mapped[float | None] = mapped_column(Float)  # avg Brier improvement when pattern applied
+    status: Mapped[str] = mapped_column(String(30), default="candidate")  # candidate, validated, rejected, retired
+    discovered_by: Mapped[str] = mapped_column(String(50))  # which agent/process found it
+    category: Mapped[str | None] = mapped_column(String(100))  # which prediction category, or null for global
+    version: Mapped[int] = mapped_column(Integer, default=1)  # incremented on updates
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class MetaAgentRun(Base):
     """Log of meta-agent execution runs and their outputs."""
     __tablename__ = "meta_agent_runs"

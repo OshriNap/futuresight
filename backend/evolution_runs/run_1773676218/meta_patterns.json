@@ -1,0 +1,86 @@
+{
+  "version": "1.0",
+  "save_version": 1,
+  "patterns": [
+    {
+      "pattern_id": "premature_convergence",
+      "detector": "Population diversity drops below 30% while fitness has not improved for 3+ generations. The population is converging prematurely on a local optimum.",
+      "reframe": "Inject random individuals, increase mutation rate, and prefer structural over point mutations to escape the local optimum. Consider re-injecting hall-of-fame individuals with high diversity.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    },
+    {
+      "pattern_id": "fitness_plateau",
+      "detector": "Best fitness has not improved for N generations (N >= 5). Point mutations are not finding better solutions.",
+      "reframe": "Switch to structural mutations. Try fundamentally different approaches: different algorithms, data structures, or control flow. Point mutations are exhausted in this region.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    },
+    {
+      "pattern_id": "crossover_ineffective",
+      "detector": "Crossover offspring consistently have lower fitness than both parents. The parents may be too different for meaningful recombination.",
+      "reframe": "Reduce crossover rate or restrict crossover to parents with similar fitness levels. The population may have diverged into incompatible lineages.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    },
+    {
+      "pattern_id": "mutation_too_aggressive",
+      "detector": "Most mutations (>70%) produce individuals with worse fitness than their parents. The mutations are too destructive.",
+      "reframe": "Shift mutation weights toward point mutations and reduce structural mutation rate. The current code is close to a good solution and needs fine-tuning, not restructuring.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    },
+    {
+      "pattern_id": "mutation_too_conservative",
+      "detector": "Most mutations (<10% difference from parent fitness) don't meaningfully change fitness. The mutations are too timid to explore.",
+      "reframe": "Increase structural mutation rate and add more aggressive prompting. The search space near the current solutions is flat and needs larger jumps to find improvement.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    },
+    {
+      "pattern_id": "overfitting_test_cases",
+      "detector": "Fitness is high but the evolved code uses hardcoded values, lookup tables, or special-cases specific test inputs rather than solving the general problem.",
+      "reframe": "Add diversity to test cases, penalize code length (parsimony), and explicitly instruct mutations to avoid hardcoding. Consider adding generalization metrics to the fitness function.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    },
+    {
+      "pattern_id": "bloat",
+      "detector": "Code length grows across generations without corresponding fitness improvement. Individuals accumulate dead code or unnecessary complexity.",
+      "reframe": "Apply parsimony pressure: penalize code length in fitness, or prefer shorter code at equal fitness. Explicitly prompt mutations to simplify and remove dead code.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    },
+    {
+      "pattern_id": "lost_good_traits",
+      "detector": "A beneficial trait (algorithm, technique) that appeared in earlier generations has disappeared from the current population. Good genes were lost through drift.",
+      "reframe": "Increase elitism count to preserve more good individuals. Re-inject hall-of-fame individuals that had the lost trait. Consider increasing population size to maintain diversity.",
+      "source": "",
+      "times_detected": 0,
+      "times_reframe_helped": 0,
+      "success_rate": 0.0,
+      "examples": []
+    }
+  ]
+}
