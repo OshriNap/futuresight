@@ -1,6 +1,8 @@
 from app.models.agent import Agent, AgentPerformanceLog
 from app.models.event_graph import EventEdge, EventNode
 from app.models.evolution import EvolutionRun, GenomePredictionLink, StrategyGenome
+from app.models.indicator import Indicator
+from app.models.insight import Insight
 from app.models.meta import FeatureImportance, MetaAgentRun, PredictionMethod, Scratchpad, SourceReliability
 from app.models.prediction import Prediction, PredictionScore
 from app.models.price_history import PriceSnapshot
@@ -25,4 +27,6 @@ __all__ = [
     "StrategyGenome",
     "GenomePredictionLink",
     "EvolutionRun",
+    "Indicator",
+    "Insight",
 ]
