@@ -19,6 +19,10 @@ class InterestCreate(BaseModel):
     category: str | None = None
     priority: str = "medium"
     notification_enabled: bool = True
+    indicators: list[str] | None = None
+    market_filters: list[str] | None = None
+    region: str | None = None
+    enabled: bool = True
 
 
 class InterestResponse(BaseModel):
@@ -29,6 +33,10 @@ class InterestResponse(BaseModel):
     category: str | None
     priority: str
     notification_enabled: bool
+    indicators: list[str] | None
+    market_filters: list[str] | None
+    region: str | None
+    enabled: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

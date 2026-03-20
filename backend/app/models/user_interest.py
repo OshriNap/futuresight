@@ -17,4 +17,8 @@ class UserInterest(Base):
     category: Mapped[str | None] = mapped_column(String(100))
     priority: Mapped[str] = mapped_column(String(20), default="medium")  # high, medium, low
     notification_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    indicators: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    market_filters: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    region: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
