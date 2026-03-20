@@ -647,41 +647,8 @@ async def trigger_collect_indicators():
 
 
 @router.post("/generate-insights")
-async def trigger_generate_insights(db: AsyncSession = Depends(get_db)):
-    """Convenience trigger for insight generation."""
-    from app.models.user_interest import UserInterest
-
-    result = await db.execute(
-        select(UserInterest).where(UserInterest.enabled.is_(True))
-    )
-    interests = result.scalars().all()
-
-    contexts = {}
-    for interest in interests:
-        domain = interest.category or interest.name
-        indicator_ids = []
-        for spec in interest.indicators or []:
-            if ":" in spec:
-                _, series_id = spec.split(":", 1)
-                indicator_ids.append(series_id)
-
-        ind_q = await db.execute(
-            select(Indicator)
-            .where(Indicator.series_id.in_(indicator_ids) if indicator_ids else Indicator.id.is_(None))
-            .order_by(Indicator.release_date.desc())
-            .limit(20)
-        )
-        indicators = ind_q.scalars().all()
-
-        contexts[domain] = {
-            "interest_id": str(interest.id),
-            "interest_name": interest.name,
-            "region": interest.region,
-            "indicator_count": len(indicators),
-            "latest_indicators": [
-                {"series_id": i.series_id, "name": i.name, "value": i.value, "period": i.period}
-                for i in indicators[:5]
-            ],
-        }
-
-    return {"status": "ok", "domains": contexts}
+async def trigger_generate_insights():
+    """Generate draft insights for all enabled interests using local Ollama."""
+    from app.tasks.insight_tasks import generate_insights
+    result = await generate_insights()
+    return {"status": "completed", "result": result}
