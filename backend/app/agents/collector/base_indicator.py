@@ -24,7 +24,7 @@ class IndicatorRecord:
     unit: str | None
     period: str
     release_date: date | None = None
-    metadata: dict | None = None
+    extra_data: dict | None = None
 
 
 class BaseIndicatorCollector(ABC):
@@ -68,8 +68,8 @@ class BaseIndicatorCollector(ABC):
                     if indicator.value != record.value:
                         indicator.value = record.value
                         indicator.release_date = record.release_date
-                        indicator.metadata = record.metadata
-                        flag_modified(indicator, "metadata")
+                        indicator.extra_data = record.extra_data
+                        flag_modified(indicator, "extra_data")
                         saved += 1
                 else:
                     indicator = Indicator(
@@ -82,7 +82,7 @@ class BaseIndicatorCollector(ABC):
                         unit=record.unit,
                         period=record.period,
                         release_date=record.release_date,
-                        metadata=record.metadata,
+                        extra_data=record.extra_data,
                     )
                     session.add(indicator)
                     saved += 1

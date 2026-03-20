@@ -26,4 +26,4 @@ class Indicator(Base):
     unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
     period: Mapped[str] = mapped_column(String(20))
     release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    extra_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
