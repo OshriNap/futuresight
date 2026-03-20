@@ -19,7 +19,8 @@ from app.models.user_interest import UserInterest
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://192.168.50.114:11434"
-OLLAMA_MODEL = "qwen3:8b"
+OLLAMA_FAST = "qwen3:8b"        # Simple tasks, fast
+OLLAMA_SMART = "qwen3.5:latest"  # Complex reasoning, slower
 
 SYSTEM_PROMPT = """You are an economic and geopolitical analyst. Given data about a topic (indicators, market predictions, news), produce a structured analysis in valid JSON with these four fields:
 
@@ -100,6 +101,50 @@ async def generate_insights() -> dict:
 
     logger.info(f"Generated {generated} insights, {failed} failed")
     return {"generated": generated, "failed": failed, "details": results}
+
+
+async def generate_single_insight(interest_id: str) -> dict:
+    """Generate a draft insight for a single interest."""
+    import uuid as uuid_mod
+    async with async_session() as db:
+        from sqlalchemy import select as sel
+        result = await db.execute(
+            sel(UserInterest).where(UserInterest.id == uuid_mod.UUID(interest_id))
+        )
+        interest = result.scalar_one_or_none()
+
+    if not interest:
+        return {"error": "Interest not found"}
+
+    domain = interest.category or interest.name
+    context = await _build_context(interest)
+    if not context["has_data"]:
+        return {"domain": domain, "status": "skipped — no data"}
+
+    analysis = await _call_ollama(context["prompt"])
+    if not analysis:
+        return {"domain": domain, "status": "ollama failed"}
+
+    async with async_session() as db:
+        await db.execute(
+            update(Insight)
+            .where(Insight.domain == domain, Insight.stale.is_(False))
+            .values(stale=True)
+        )
+        insight = Insight(
+            domain=domain,
+            title=analysis.get("title", f"{interest.name} — Auto Analysis"),
+            ground_truth=analysis.get("ground_truth", ""),
+            trend_analysis=analysis.get("trend_analysis", ""),
+            prediction=analysis.get("prediction", ""),
+            action_items=analysis.get("action_items", []),
+            confidence="low",
+            sources=context["source_refs"],
+        )
+        db.add(insight)
+        await db.commit()
+
+    return {"domain": domain, "status": "generated", "title": insight.title}
 
 
 async def _build_context(interest: UserInterest) -> dict:
@@ -196,16 +241,16 @@ async def _build_context(interest: UserInterest) -> dict:
     return {"prompt": prompt, "has_data": has_data, "source_refs": source_refs}
 
 
-async def _call_ollama(prompt: str) -> dict | None:
+async def _call_ollama(prompt: str, model: str = OLLAMA_SMART) -> dict | None:
     """Call Ollama and parse JSON response."""
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=180) as client:
             resp = await client.post(
                 f"{OLLAMA_URL}/api/generate",
                 json={
-                    "model": OLLAMA_MODEL,
+                    "model": model,
                     "system": SYSTEM_PROMPT,
-                    "prompt": prompt,
+                    "prompt": "/no_think\n" + prompt,
                     "stream": False,
                     "options": {"temperature": 0.3},
                 },
@@ -213,14 +258,9 @@ async def _call_ollama(prompt: str) -> dict | None:
             resp.raise_for_status()
             text = resp.json().get("response", "")
 
-            # Extract JSON from response (handle markdown code blocks)
-            text = text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-                text = text.rsplit("```", 1)[0]
-            text = text.strip()
-
-            analysis = json.loads(text)
+            analysis = _extract_json(text)
+            if not analysis:
+                return None
 
             # Generate a title from ground_truth
             gt = analysis.get("ground_truth", "")
@@ -229,9 +269,42 @@ async def _call_ollama(prompt: str) -> dict | None:
 
             return analysis
 
-    except json.JSONDecodeError:
-        logger.warning(f"Ollama returned non-JSON: {text[:200]}")
-        return None
     except Exception as e:
         logger.warning(f"Ollama call failed: {e}")
         return None
+
+
+def _extract_json(text: str) -> dict | None:
+    """Extract JSON from Ollama response, handling think tags, markdown, etc."""
+    import re
+
+    # Remove <think>...</think> blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = text.strip()
+
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Remove markdown code blocks
+    if "```" in text:
+        match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+
+    # Find first { ... last } as JSON
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        try:
+            return json.loads(text[first_brace:last_brace + 1])
+        except json.JSONDecodeError:
+            pass
+
+    logger.warning(f"Could not extract JSON from Ollama response: {text[:300]}")
+    return None

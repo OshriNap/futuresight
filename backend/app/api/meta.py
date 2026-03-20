@@ -652,3 +652,11 @@ async def trigger_generate_insights():
     from app.tasks.insight_tasks import generate_insights
     result = await generate_insights()
     return {"status": "completed", "result": result}
+
+
+@router.post("/generate-insight/{interest_id}")
+async def trigger_single_insight(interest_id: str):
+    """Generate a draft insight for a single interest using local Ollama."""
+    from app.tasks.insight_tasks import generate_single_insight
+    result = await generate_single_insight(interest_id)
+    return {"status": "completed", "result": result}
