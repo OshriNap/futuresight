@@ -84,6 +84,10 @@ export interface UserInterest {
   active: boolean;
   created_at: string;
   updated_at: string;
+  indicators?: string[];
+  market_filters?: string[];
+  region?: string;
+  enabled: boolean;
 }
 
 export interface EventNode {
@@ -116,6 +120,46 @@ export interface DashboardStats {
   active_agents: number;
   predictions_today: number;
   accuracy_trend: number;
+}
+
+export interface Indicator {
+  id: string;
+  source_agency: string;
+  series_id: string;
+  name: string;
+  category?: string;
+  region?: string;
+  value: number;
+  unit?: string;
+  period: string;
+  release_date?: string;
+  created_at: string;
+}
+
+export interface IndicatorHistory {
+  series_id: string;
+  agency: string;
+  name: string;
+  unit?: string;
+  data: { period: string; value: number; release_date?: string }[];
+}
+
+export interface Insight {
+  id: string;
+  created_at: string;
+  domain: string;
+  title: string;
+  ground_truth: string;
+  trend_analysis: string;
+  prediction: string;
+  action_items?: string[];
+  confidence: string;
+  sources?: {
+    indicators?: string[];
+    market_sources?: string[];
+    news_sources?: string[];
+  };
+  stale: boolean;
 }
 
 export interface ApiResponse<T> {

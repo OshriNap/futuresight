@@ -5,6 +5,9 @@ import {
   DashboardStats,
   GraphData,
   PaginatedResponse,
+  Indicator,
+  IndicatorHistory,
+  Insight,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.50.114";
@@ -115,4 +118,33 @@ export async function triggerWebhook(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+// Indicators
+export async function getIndicators(params?: {
+  agency?: string;
+  region?: string;
+  series_id?: string;
+}) {
+  const searchParams = new URLSearchParams();
+  if (params?.agency) searchParams.set("agency", params.agency);
+  if (params?.region) searchParams.set("region", params.region);
+  if (params?.series_id) searchParams.set("series_id", params.series_id);
+  const qs = searchParams.toString();
+  return fetchApi<Indicator[]>(`/api/indicators/${qs ? `?${qs}` : ""}`);
+}
+
+export async function getIndicatorHistory(seriesId: string, agency?: string) {
+  const qs = agency ? `?agency=${agency}` : "";
+  return fetchApi<IndicatorHistory>(`/api/indicators/history/${seriesId}${qs}`);
+}
+
+// Insights
+export async function getInsights(domain?: string) {
+  const qs = domain ? `?domain=${domain}` : "";
+  return fetchApi<Insight[]>(`/api/insights/${qs}`);
+}
+
+export async function getInsight(id: string) {
+  return fetchApi<Insight>(`/api/insights/${id}`);
 }
