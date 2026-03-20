@@ -1,51 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getInterests, createInterest, deleteInterest } from "@/lib/api";
+import Link from "next/link";
+import { getInterests, createInterest, updateInterest, deleteInterest } from "@/lib/api";
 import { UserInterest } from "@/lib/types";
-
-const mockInterests: UserInterest[] = [
-  {
-    id: "1",
-    name: "AI & Machine Learning",
-    keywords: ["artificial intelligence", "machine learning", "LLM", "neural networks"],
-    priority: "high",
-    category: "Technology",
-    active: true,
-    created_at: "2026-01-15T00:00:00Z",
-    updated_at: "2026-03-01T00:00:00Z",
-  },
-  {
-    id: "2",
-    name: "Federal Reserve Policy",
-    keywords: ["federal reserve", "interest rates", "FOMC", "monetary policy"],
-    priority: "high",
-    category: "Economics",
-    active: true,
-    created_at: "2026-01-20T00:00:00Z",
-    updated_at: "2026-03-05T00:00:00Z",
-  },
-  {
-    id: "3",
-    name: "Renewable Energy",
-    keywords: ["solar", "wind", "renewable", "clean energy", "EV"],
-    priority: "medium",
-    category: "Energy",
-    active: true,
-    created_at: "2026-02-01T00:00:00Z",
-    updated_at: "2026-02-15T00:00:00Z",
-  },
-  {
-    id: "4",
-    name: "Cryptocurrency Markets",
-    keywords: ["bitcoin", "ethereum", "crypto", "defi", "blockchain"],
-    priority: "low",
-    category: "Finance",
-    active: true,
-    created_at: "2026-02-10T00:00:00Z",
-    updated_at: "2026-02-20T00:00:00Z",
-  },
-];
 
 function getPriorityBadge(priority: string): string {
   switch (priority) {
@@ -60,69 +18,144 @@ function getPriorityBadge(priority: string): string {
   }
 }
 
+function getRegionBadge(region: string): string {
+  switch (region) {
+    case "IL":
+      return "bg-blue-500/15 text-blue-400";
+    case "US":
+      return "bg-green-500/15 text-green-400";
+    case "EU":
+      return "bg-purple-500/15 text-purple-400";
+    case "global":
+      return "bg-yellow-500/15 text-yellow-400";
+    default:
+      return "bg-gray-500/15 text-gray-400";
+  }
+}
+
+interface FormData {
+  name: string;
+  keywords: string;
+  priority: "high" | "medium" | "low";
+  category: string;
+  indicators: string;
+  market_filters: string;
+  region: string;
+  enabled: boolean;
+}
+
+const emptyForm: FormData = {
+  name: "",
+  keywords: "",
+  priority: "medium",
+  category: "",
+  indicators: "",
+  market_filters: "",
+  region: "global",
+  enabled: true,
+};
+
 export default function InterestsPage() {
-  const [interests, setInterests] = useState<UserInterest[]>(mockInterests);
+  const [interests, setInterests] = useState<UserInterest[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({
-    name: "",
-    keywords: "",
-    priority: "medium" as "high" | "medium" | "low",
-    category: "",
-  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<FormData>(emptyForm);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.50.114";
-        const res = await fetch(`${API_BASE}/api/interests`);
-        if (res.ok) {
-          const data = await res.json();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const mapped = (Array.isArray(data) ? data : []).map((i: any) => ({
-            id: i.id,
-            name: i.name || "Interest",
-            keywords: Array.isArray(i.keywords) ? i.keywords : [],
-            priority: i.priority || "medium",
-            category: i.category || "General",
-            active: i.active ?? true,
-            created_at: i.created_at || new Date().toISOString(),
-            updated_at: i.updated_at || new Date().toISOString(),
-          }));
-          if (mapped.length > 0) setInterests(mapped);
-        }
+        const data = await getInterests();
+        if (data.length > 0) setInterests(data);
       } catch {
-        // Use mock data
+        // Keep empty state
       }
     }
     loadData();
   }, []);
 
+  const openCreateForm = () => {
+    setEditingId(null);
+    setFormData(emptyForm);
+    setShowForm(true);
+  };
+
+  const openEditForm = (interest: UserInterest) => {
+    setEditingId(interest.id);
+    setFormData({
+      name: interest.name,
+      keywords: interest.keywords.join(", "),
+      priority: interest.priority,
+      category: interest.category,
+      indicators: (interest.indicators || []).join(", "),
+      market_filters: (interest.market_filters || []).join(", "),
+      region: interest.region || "global",
+      enabled: interest.enabled ?? interest.active ?? true,
+    });
+    setShowForm(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newInterest = {
+    const payload = {
       name: formData.name,
       keywords: formData.keywords.split(",").map((k) => k.trim()).filter(Boolean),
       priority: formData.priority,
       category: formData.category,
-      active: true,
+      active: formData.enabled,
+      enabled: formData.enabled,
+      indicators: formData.indicators.split(",").map((k) => k.trim()).filter(Boolean),
+      market_filters: formData.market_filters.split(",").map((k) => k.trim()).filter(Boolean),
+      region: formData.region,
     };
 
-    try {
-      const created = await createInterest(newInterest);
-      setInterests([...interests, created]);
-    } catch {
-      // Add locally with a temp id
-      const tempInterest: UserInterest = {
-        ...newInterest,
-        id: `temp-${Date.now()}`,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      setInterests([...interests, tempInterest]);
+    if (editingId) {
+      try {
+        const updated = await updateInterest(editingId, payload);
+        setInterests(interests.map((i) => (i.id === editingId ? updated : i)));
+      } catch {
+        // Update locally
+        setInterests(
+          interests.map((i) =>
+            i.id === editingId
+              ? { ...i, ...payload, updated_at: new Date().toISOString() }
+              : i
+          )
+        );
+      }
+    } else {
+      try {
+        const created = await createInterest(payload);
+        setInterests([...interests, created]);
+      } catch {
+        const tempInterest: UserInterest = {
+          ...payload,
+          id: `temp-${Date.now()}`,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        setInterests([...interests, tempInterest]);
+      }
     }
 
-    setFormData({ name: "", keywords: "", priority: "medium", category: "" });
+    setFormData(emptyForm);
+    setEditingId(null);
     setShowForm(false);
+  };
+
+  const handleToggleEnabled = async (interest: UserInterest) => {
+    const newEnabled = !(interest.enabled ?? interest.active ?? true);
+    try {
+      const updated = await updateInterest(interest.id, { enabled: newEnabled, active: newEnabled });
+      setInterests(interests.map((i) => (i.id === interest.id ? updated : i)));
+    } catch {
+      setInterests(
+        interests.map((i) =>
+          i.id === interest.id
+            ? { ...i, enabled: newEnabled, active: newEnabled, updated_at: new Date().toISOString() }
+            : i
+        )
+      );
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -132,6 +165,12 @@ export default function InterestsPage() {
       // Remove locally anyway
     }
     setInterests(interests.filter((i) => i.id !== id));
+  };
+
+  const cancelForm = () => {
+    setShowForm(false);
+    setEditingId(null);
+    setFormData(emptyForm);
   };
 
   return (
@@ -144,18 +183,18 @@ export default function InterestsPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => (showForm ? cancelForm() : openCreateForm())}
           className="btn-primary"
         >
           {showForm ? "Cancel" : "+ Add Interest"}
         </button>
       </div>
 
-      {/* Add form */}
+      {/* Add/Edit form */}
       {showForm && (
         <div className="card">
           <h3 className="text-lg font-semibold text-white mb-4">
-            Add New Interest
+            {editingId ? "Edit Interest" : "Add New Interest"}
           </h3>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -205,30 +244,104 @@ export default function InterestsPage() {
                 required
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1.5">
-                Priority
-              </label>
-              <div className="flex gap-3">
-                {(["high", "medium", "low"] as const).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setFormData({ ...formData, priority: p })}
-                    className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                      formData.priority === p
-                        ? "bg-accent-blue text-white"
-                        : "bg-bg-primary text-gray-400 hover:text-gray-200"
-                    }`}
-                  >
-                    {p.charAt(0).toUpperCase() + p.slice(1)}
-                  </button>
-                ))}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                  Indicators (comma-separated series IDs)
+                </label>
+                <textarea
+                  value={formData.indicators}
+                  onChange={(e) =>
+                    setFormData({ ...formData, indicators: e.target.value })
+                  }
+                  placeholder="e.g., FRED:UNRATE, CBS_IL:cpi"
+                  className="input-field min-h-[60px] resize-y"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                  Market Filters (comma-separated)
+                </label>
+                <textarea
+                  value={formData.market_filters}
+                  onChange={(e) =>
+                    setFormData({ ...formData, market_filters: e.target.value })
+                  }
+                  placeholder="e.g., israel, recession"
+                  className="input-field min-h-[60px] resize-y"
+                  rows={2}
+                />
               </div>
             </div>
-            <div className="flex justify-end">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                  Priority
+                </label>
+                <div className="flex gap-3">
+                  {(["high", "medium", "low"] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, priority: p })}
+                      className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                        formData.priority === p
+                          ? "bg-accent-blue text-white"
+                          : "bg-bg-primary text-gray-400 hover:text-gray-200"
+                      }`}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                  Region
+                </label>
+                <select
+                  value={formData.region}
+                  onChange={(e) =>
+                    setFormData({ ...formData, region: e.target.value })
+                  }
+                  className="input-field"
+                >
+                  <option value="global">Global</option>
+                  <option value="US">US</option>
+                  <option value="IL">IL (Israel)</option>
+                  <option value="EU">EU</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                  Enabled
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={formData.enabled}
+                    onChange={(e) =>
+                      setFormData({ ...formData, enabled: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded border-gray-600 bg-bg-primary text-accent-blue focus:ring-accent-blue focus:ring-offset-0"
+                  />
+                  <span className="text-sm text-gray-300">
+                    {formData.enabled ? "Active" : "Disabled"}
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={cancelForm}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
               <button type="submit" className="btn-primary">
-                Add Interest
+                {editingId ? "Update Interest" : "Add Interest"}
               </button>
             </div>
           </form>
@@ -237,46 +350,113 @@ export default function InterestsPage() {
 
       {/* Interests list */}
       <div className="space-y-3">
-        {interests.map((interest) => (
-          <div key={interest.id} className="card-hover">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <div className="flex items-center gap-3">
-                  <h3 className="font-medium text-white">{interest.name}</h3>
-                  <span
-                    className={`badge ${getPriorityBadge(interest.priority)}`}
-                  >
-                    {interest.priority}
-                  </span>
-                  <span className="badge bg-accent-blue/10 text-accent-blue">
-                    {interest.category}
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {interest.keywords.map((keyword) => (
-                    <span
-                      key={keyword}
-                      className="rounded bg-bg-primary px-2 py-0.5 text-xs text-gray-400"
+        {interests.map((interest) => {
+          const isEnabled = interest.enabled ?? interest.active ?? true;
+          return (
+            <div key={interest.id} className={`card-hover ${!isEnabled ? "opacity-60" : ""}`}>
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3">
+                    {/* Enabled toggle */}
+                    <button
+                      onClick={() => handleToggleEnabled(interest)}
+                      className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${
+                        isEnabled ? "bg-accent-blue" : "bg-gray-600"
+                      }`}
+                      title={isEnabled ? "Disable" : "Enable"}
                     >
-                      {keyword}
+                      <span
+                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          isEnabled ? "left-4" : "left-0.5"
+                        }`}
+                      />
+                    </button>
+                    <Link
+                      href={`/interests/${interest.id}`}
+                      className="font-medium text-white hover:text-accent-blue transition-colors"
+                    >
+                      {interest.name}
+                    </Link>
+                    <span
+                      className={`badge ${getPriorityBadge(interest.priority)}`}
+                    >
+                      {interest.priority}
                     </span>
-                  ))}
+                    <span className="badge bg-accent-blue/10 text-accent-blue">
+                      {interest.category}
+                    </span>
+                    {interest.region && (
+                      <span className={`badge ${getRegionBadge(interest.region)}`}>
+                        {interest.region}
+                      </span>
+                    )}
+                  </div>
+                  {/* Keywords */}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {interest.keywords.map((keyword) => (
+                      <span
+                        key={keyword}
+                        className="rounded bg-bg-primary px-2 py-0.5 text-xs text-gray-400"
+                      >
+                        {keyword}
+                      </span>
+                    ))}
+                  </div>
+                  {/* Indicators */}
+                  {interest.indicators && interest.indicators.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs text-gray-500 mr-1">Indicators:</span>
+                      {interest.indicators.map((ind) => (
+                        <span
+                          key={ind}
+                          className="rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400"
+                        >
+                          {ind}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {/* Market Filters */}
+                  {interest.market_filters && interest.market_filters.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs text-gray-500 mr-1">Market filters:</span>
+                      {interest.market_filters.map((mf) => (
+                        <span
+                          key={mf}
+                          className="rounded bg-orange-500/10 px-2 py-0.5 text-xs text-orange-400"
+                        >
+                          {mf}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleDelete(interest.id)}
-                  className="rounded p-1.5 text-gray-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
-                  title="Delete"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-2 ml-3">
+                  {/* Edit button */}
+                  <button
+                    onClick={() => openEditForm(interest)}
+                    className="rounded p-1.5 text-gray-500 transition-colors hover:bg-accent-blue/10 hover:text-accent-blue"
+                    title="Edit"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                    </svg>
+                  </button>
+                  {/* Delete button */}
+                  <button
+                    onClick={() => handleDelete(interest.id)}
+                    className="rounded p-1.5 text-gray-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                    title="Delete"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {interests.length === 0 && (
