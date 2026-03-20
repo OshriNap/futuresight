@@ -13,33 +13,36 @@ class ManifoldCollector(BaseCollector):
     platform = "manifold"
 
     @staticmethod
-    async def _get_interest_keywords() -> list[str]:
+    async def _get_interest_terms() -> list[str]:
+        """Return combined keywords + market_filters from enabled UserInterests."""
         try:
             from sqlalchemy import select
             from app.database import async_session
             from app.models.user_interest import UserInterest
 
             async with async_session() as db:
-                result = await db.execute(select(UserInterest))
+                result = await db.execute(
+                    select(UserInterest).where(UserInterest.enabled.is_(True))
+                )
                 interests = result.scalars().all()
-                return [kw for i in interests for kw in (i.keywords or [])]
+                terms = []
+                for i in interests:
+                    terms.extend(i.keywords or [])
+                    terms.extend(i.market_filters or [])
+                # Deduplicate while preserving order
+                return list(dict.fromkeys(terms))
         except Exception:
             return []
 
     async def collect(self) -> list[CollectedItem]:
-        """Collect prediction markets from Manifold Markets API."""
+        """Collect prediction markets from Manifold Markets API, driven by user interests."""
         items = []
         seen_ids: set[str] = set()
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                # Fetch top markets by liquidity
-                search_terms = ["prediction", "technology", "geopolitics", "economy"]
-
-                # Add user interest keywords
-                interest_kws = await self._get_interest_keywords()
-                search_terms.extend(interest_kws)
-                search_terms = list(dict.fromkeys(search_terms))  # dedupe
+                # Search terms driven entirely by user interests
+                search_terms = await self._get_interest_terms()
 
                 for term in search_terms:
                     try:

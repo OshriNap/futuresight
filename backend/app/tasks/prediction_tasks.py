@@ -31,8 +31,14 @@ SPORTS_KEYWORDS = [
 ]
 
 
-def _is_sports_or_entertainment(title: str, slug: str | None) -> bool:
-    lower = (title + " " + (slug or "")).lower()
+def _is_sports_or_entertainment(source) -> bool:
+    """Reject sports and entertainment sources using LLM-assigned category."""
+    if source.category in ("sports", "entertainment"):
+        return True
+    # Keep legacy keyword check as fallback for uncategorized sources
+    title = (source.title or "").lower()
+    slug = ((source.raw_data or {}).get("slug") or "").lower()
+    lower = title + " " + slug
     return any(kw in lower for kw in SPORTS_KEYWORDS)
 
 
@@ -80,10 +86,9 @@ async def generate_predictions() -> dict:
 
         for source in sources:
             raw = source.raw_data or {}
-            slug = raw.get("slug", "")
 
             # Skip sports/entertainment
-            if _is_sports_or_entertainment(source.title, slug):
+            if _is_sports_or_entertainment(source):
                 skipped_sports += 1
                 continue
 

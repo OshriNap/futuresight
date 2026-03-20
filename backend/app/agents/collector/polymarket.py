@@ -13,42 +13,38 @@ class PolymarketCollector(BaseCollector):
     platform = "polymarket"
 
     @staticmethod
-    async def _get_interest_keywords() -> list[str]:
+    async def _get_interest_terms() -> list[str]:
+        """Return combined keywords + market_filters from enabled UserInterests."""
         try:
             from sqlalchemy import select
             from app.database import async_session
             from app.models.user_interest import UserInterest
 
             async with async_session() as db:
-                result = await db.execute(select(UserInterest))
+                result = await db.execute(
+                    select(UserInterest).where(UserInterest.enabled.is_(True))
+                )
                 interests = result.scalars().all()
-                return [kw for i in interests for kw in (i.keywords or [])]
+                terms = []
+                for i in interests:
+                    terms.extend(i.keywords or [])
+                    terms.extend(i.market_filters or [])
+                # Deduplicate while preserving order
+                return list(dict.fromkeys(terms))
         except Exception:
             return []
 
     async def collect(self) -> list[CollectedItem]:
-        """Collect active markets from Polymarket's Gamma API."""
+        """Collect active markets from Polymarket's Gamma API, driven by user interests."""
         items = []
         seen_ids: set[str] = set()
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                # Fetch top markets by volume
-                response = await client.get(
-                    f"{GAMMA_API_URL}/markets",
-                    params={
-                        "active": "true",
-                        "closed": "false",
-                        "limit": 100,
-                        "order": "volume",
-                        "ascending": "false",
-                    },
-                )
-                response.raise_for_status()
-                markets = list(response.json())
+                markets = []
 
-                # Also search for user interest keywords
-                interest_kws = await self._get_interest_keywords()
-                for kw in interest_kws:
+                # Search only for user interest terms (keywords + market_filters)
+                interest_terms = await self._get_interest_terms()
+                for term in interest_terms:
                     try:
                         r = await client.get(
                             f"{GAMMA_API_URL}/markets",
@@ -56,7 +52,7 @@ class PolymarketCollector(BaseCollector):
                                 "active": "true",
                                 "closed": "false",
                                 "limit": 20,
-                                "tag": kw,
+                                "tag": term,
                             },
                         )
                         r.raise_for_status()
