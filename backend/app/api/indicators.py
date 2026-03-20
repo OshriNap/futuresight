@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -22,7 +22,7 @@ class IndicatorResponse(BaseModel):
     value: float
     unit: str | None
     period: str
-    release_date: str | None
+    release_date: date | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

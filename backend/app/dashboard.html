@@ -121,6 +121,8 @@ tr:hover { background:var(--bg3); }
     <a class="nav-item" data-tab="news" onclick="showTab('news')">News & Social</a>
     <a class="nav-item" data-tab="methods" onclick="showTab('methods')">Methods</a>
     <a class="nav-item" data-tab="graph" onclick="showTab('graph')">Event Graph</a>
+    <a class="nav-item" data-tab="insights" onclick="showTab('insights')">Insights</a>
+    <a class="nav-item" data-tab="indicators" onclick="showTab('indicators')">Indicators</a>
     <a class="nav-item" data-tab="interests" onclick="showTab('interests')">Interests</a>
     <a class="nav-item" data-tab="patterns" onclick="showTab('patterns')">Patterns</a>
     <a class="nav-item" data-tab="agents" onclick="showTab('agents')">Agent Runs</a>
@@ -134,6 +136,8 @@ tr:hover { background:var(--bg3); }
     <div id="tab-news" class="tab-content" style="display:none"></div>
     <div id="tab-methods" class="tab-content" style="display:none"></div>
     <div id="tab-graph" class="tab-content" style="display:none"></div>
+    <div id="tab-insights" class="tab-content" style="display:none"></div>
+    <div id="tab-indicators" class="tab-content" style="display:none"></div>
     <div id="tab-interests" class="tab-content" style="display:none"></div>
     <div id="tab-patterns" class="tab-content" style="display:none"></div>
     <div id="tab-agents" class="tab-content" style="display:none"></div>
@@ -661,25 +665,143 @@ loaders.graph = async () => {
 };
 
 // ── Interests ──
+// ─── Insights Tab ───
+loaders.insights = async () => {
+  const insights = await api('/api/insights/?include_stale=true&limit=50');
+  const confColor = {high:'b-green',medium:'b-amber',low:'b-red'};
+
+  const html = insights.length ? insights.map(i => `
+    <div class="card" style="${i.stale ? 'opacity:0.5' : ''}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div style="font-weight:600;font-size:15px">${i.title}${i.stale ? ' <span style="color:var(--text3);font-size:11px">(stale)</span>' : ''}</div>
+        <div style="display:flex;gap:4px">
+          <span class="badge ${confColor[i.confidence]||'b-amber'}">${i.confidence}</span>
+          <span class="badge b-purple">${i.domain}</span>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px">${ago(i.created_at)}</div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:var(--cyan);text-transform:uppercase;margin-bottom:4px;font-weight:600">Ground Truth</div>
+        <div style="font-size:13px;color:var(--text);line-height:1.5">${i.ground_truth}</div>
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:var(--amber);text-transform:uppercase;margin-bottom:4px;font-weight:600">Trend Analysis</div>
+        <div style="font-size:13px;color:var(--text);line-height:1.5">${i.trend_analysis}</div>
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;color:var(--purple);text-transform:uppercase;margin-bottom:4px;font-weight:600">Prediction</div>
+        <div style="font-size:13px;color:var(--text);line-height:1.5">${i.prediction}</div>
+      </div>
+      ${(i.action_items||[]).length ? `
+        <div>
+          <div style="font-size:11px;color:var(--green);text-transform:uppercase;margin-bottom:4px;font-weight:600">Action Items</div>
+          <ul style="font-size:13px;padding-left:18px;line-height:1.6">${i.action_items.map(a => `<li>${a}</li>`).join('')}</ul>
+        </div>
+      ` : ''}
+    </div>
+  `).join('') : '<div class="card"><div style="color:var(--text3);padding:20px;text-align:center">No insights yet. Run the pipeline to collect data, then generate insights.</div></div>';
+
+  document.getElementById('tab-insights').innerHTML = `
+    <h2 style="margin-bottom:16px">Intelligence Insights</h2>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn btn-p" onclick="doAction(this,'collect-indicators','').then(()=>loaders.indicators())">Collect Indicators</button>
+      <button class="btn btn-p" onclick="doAction(this,'generate-insights','')">Generate Insights</button>
+    </div>
+    ${html}
+  `;
+};
+
+// ─── Indicators Tab ───
+loaders.indicators = async () => {
+  const indicators = await api('/api/indicators/?limit=200');
+
+  // Group by series
+  const bySeries = {};
+  for (const ind of indicators) {
+    const key = ind.source_agency + ':' + ind.series_id;
+    if (!bySeries[key]) bySeries[key] = {name: ind.name, agency: ind.source_agency, region: ind.region, unit: ind.unit, series_id: ind.series_id, points: []};
+    bySeries[key].points.push(ind);
+  }
+
+  const agencyColor = {FRED:'b-blue', CBS_IL:'b-cyan', WORLD_BANK:'b-green'};
+
+  const seriesHtml = Object.entries(bySeries).map(([key, s]) => {
+    const sorted = s.points.sort((a,b) => a.period.localeCompare(b.period));
+    const latest = sorted[sorted.length - 1];
+    const prev = sorted.length > 1 ? sorted[sorted.length - 2] : null;
+    const change = prev ? ((latest.value - prev.value) / Math.abs(prev.value) * 100) : null;
+    const arrow = change !== null ? (change > 0 ? '↑' : change < 0 ? '↓' : '→') : '';
+    const arrowColor = change !== null ? (change > 0 ? 'var(--red)' : change < 0 ? 'var(--green)' : 'var(--text3)') : '';
+
+    const sparkData = sorted.slice(-10).map(p => p.value);
+    const sparkMin = Math.min(...sparkData);
+    const sparkMax = Math.max(...sparkData);
+    const sparkRange = sparkMax - sparkMin || 1;
+    const sparkH = 30;
+    const sparkW = 120;
+    const sparkPoints = sparkData.map((v, i) => `${(i / (sparkData.length - 1)) * sparkW},${sparkH - ((v - sparkMin) / sparkRange) * sparkH}`).join(' ');
+
+    return `
+      <div class="run" style="display:flex;align-items:center;gap:16px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div>
+          <div style="display:flex;gap:4px;margin-top:4px">
+            <span class="badge ${agencyColor[s.agency]||'b-blue'}">${s.agency}</span>
+            ${s.region ? `<span class="badge b-amber">${s.region}</span>` : ''}
+          </div>
+        </div>
+        <svg width="${sparkW}" height="${sparkH}" style="flex-shrink:0">
+          <polyline points="${sparkPoints}" fill="none" stroke="var(--blue)" stroke-width="1.5"/>
+        </svg>
+        <div style="text-align:right;flex-shrink:0;min-width:100px">
+          <div style="font-size:18px;font-weight:700;color:var(--text)">${latest.value < 1000 ? latest.value.toFixed(2) : num(Math.round(latest.value))}</div>
+          <div style="font-size:11px;color:var(--text2)">${s.unit || ''} · ${latest.period}</div>
+          ${change !== null ? `<div style="font-size:12px;color:${arrowColor}">${arrow} ${Math.abs(change).toFixed(1)}%</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('tab-indicators').innerHTML = `
+    <h2 style="margin-bottom:16px">Economic Indicators</h2>
+    <div class="card">
+      <h3>Tracked Series (${Object.keys(bySeries).length})</h3>
+      <div class="scroll" style="max-height:600px">
+        ${seriesHtml || '<div style="color:var(--text3);padding:20px;text-align:center">No indicator data yet. Click "Collect Indicators" on the Insights tab.</div>'}
+      </div>
+    </div>
+  `;
+};
+
+// ─── Interests Tab ───
 loaders.interests = async () => {
   const interests = await api('/api/interests/');
   const priColor = {high:'b-red',medium:'b-amber',low:'b-blue'};
 
   const listHtml = interests.map(i => `
-    <div class="run" style="display:flex;justify-content:space-between;align-items:flex-start">
-      <div>
-        <div style="font-weight:600;font-size:14px;margin-bottom:4px">${i.name}</div>
+    <div class="run" style="display:flex;justify-content:space-between;align-items:flex-start;${i.enabled === false ? 'opacity:0.4' : ''}">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-weight:600;font-size:14px">${i.name}</span>
+          ${i.enabled === false ? '<span class="badge b-red">disabled</span>' : ''}
+        </div>
         ${i.description ? `<div style="font-size:12px;color:var(--text2);margin-bottom:4px">${i.description}</div>` : ''}
         <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">
           <span class="badge ${priColor[i.priority]||'b-blue'}">${i.priority}</span>
           ${i.category ? `<span class="badge b-cyan">${i.category}</span>` : ''}
-          ${i.notification_enabled ? '<span class="badge b-green">notifications on</span>' : ''}
+          ${i.region ? `<span class="badge b-amber">${i.region}</span>` : ''}
         </div>
-        <div style="display:flex;gap:4px;flex-wrap:wrap">
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">
           ${(i.keywords||[]).map(k => `<span class="badge b-blue">${k}</span>`).join('')}
         </div>
+        ${(i.market_filters||[]).length ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">${i.market_filters.map(f => `<span class="badge b-purple">${f}</span>`).join('')}</div>` : ''}
+        ${(i.indicators||[]).length ? `<div style="display:flex;gap:4px;flex-wrap:wrap"><span style="font-size:10px;color:var(--text3);margin-right:2px">series:</span>${i.indicators.map(s => `<span class="badge b-green" style="font-size:10px">${s}</span>`).join('')}</div>` : ''}
       </div>
-      <button class="btn" style="flex-shrink:0;color:var(--red);border-color:var(--red)" onclick="deleteInterest('${i.id}')">Delete</button>
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <button class="btn" style="font-size:11px" onclick="toggleInterest('${i.id}',${!i.enabled})">${i.enabled === false ? 'Enable' : 'Disable'}</button>
+        <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="deleteInterest('${i.id}')">Delete</button>
+      </div>
     </div>
   `).join('');
 
@@ -709,7 +831,26 @@ loaders.interests = async () => {
             <option value="low">Low</option>
           </select>
         </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2)">Region</label>
+          <select id="int-region" style="display:block;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:6px;font-size:12px;margin-top:2px">
+            <option value="">Global</option>
+            <option value="IL">Israel</option>
+            <option value="US">US</option>
+            <option value="EU">EU</option>
+          </select>
+        </div>
         <button class="btn btn-p" onclick="addInterest()" style="margin-bottom:1px">Add</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+        <div>
+          <label style="font-size:11px;color:var(--text2)">Market Filters (comma-sep)</label>
+          <input id="int-mf" class="filter-input" placeholder="e.g. israel, recession" style="display:block;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;width:240px;margin-top:2px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2)">Indicator Series (comma-sep)</label>
+          <input id="int-ind" class="filter-input" placeholder="e.g. FRED:UNRATE, CBS_IL:cpi" style="display:block;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:12px;width:300px;margin-top:2px">
+        </div>
       </div>
     </div>
 
@@ -727,17 +868,29 @@ async function addInterest() {
   const cat = document.getElementById('int-cat').value.trim();
   const kw = document.getElementById('int-kw').value.split(',').map(k => k.trim()).filter(Boolean);
   const pri = document.getElementById('int-pri').value;
+  const region = document.getElementById('int-region').value || null;
+  const mf = document.getElementById('int-mf').value.split(',').map(k => k.trim()).filter(Boolean);
+  const ind = document.getElementById('int-ind').value.split(',').map(k => k.trim()).filter(Boolean);
   if (!name || !kw.length) return alert('Name and at least one keyword required');
   await fetch('/api/interests/', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({name, category: cat || null, keywords: kw, priority: pri})
+    body: JSON.stringify({name, category: cat || null, keywords: kw, priority: pri, region, market_filters: mf.length ? mf : null, indicators: ind.length ? ind : null, enabled: true})
   });
   loaders.interests();
 }
 
 async function deleteInterest(id) {
   await fetch('/api/interests/' + id, {method:'DELETE'});
+  loaders.interests();
+}
+
+async function toggleInterest(id, enabled) {
+  await fetch('/api/interests/' + id, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({enabled})
+  });
   loaders.interests();
 }
 
