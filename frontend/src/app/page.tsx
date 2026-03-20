@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import StatsCard from "@/components/dashboard/StatsCard";
 import PredictionCard from "@/components/dashboard/PredictionCard";
-import { Prediction } from "@/lib/types";
+import { Prediction, UserInterest, Insight } from "@/lib/types";
+import { getInterests, getInsights } from "@/lib/api";
 
 interface SystemStats {
   total_sources: number;
@@ -34,27 +35,215 @@ interface SentimentData {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.50.114";
 
+const regionColors: Record<string, string> = {
+  US: "bg-blue-500/20 text-blue-300",
+  EU: "bg-indigo-500/20 text-indigo-300",
+  Global: "bg-emerald-500/20 text-emerald-300",
+  China: "bg-red-500/20 text-red-300",
+  Asia: "bg-amber-500/20 text-amber-300",
+};
+
+const confidenceColors: Record<string, string> = {
+  high: "bg-green-500/20 text-green-400",
+  medium: "bg-yellow-500/20 text-yellow-400",
+  low: "bg-red-500/20 text-red-400",
+};
+
+function InterestCard({
+  interest,
+  insight,
+}: {
+  interest: UserInterest;
+  insight?: Insight;
+}) {
+  const regionClass =
+    regionColors[interest.region || ""] || "bg-gray-500/20 text-gray-300";
+
+  return (
+    <div className="card hover:border-accent-blue/30 transition-colors">
+      <div className="flex items-start justify-between mb-3">
+        <h4 className="text-white font-semibold text-base">{interest.name}</h4>
+        {interest.region && (
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-medium ${regionClass}`}
+          >
+            {interest.region}
+          </span>
+        )}
+      </div>
+
+      {insight ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-gray-300 font-medium truncate flex-1">
+              {insight.title}
+            </p>
+            {insight.confidence && (
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
+                  confidenceColors[insight.confidence] ||
+                  "bg-gray-500/20 text-gray-400"
+                }`}
+              >
+                {insight.confidence}
+              </span>
+            )}
+          </div>
+          {insight.ground_truth && (
+            <p className="text-xs text-gray-500 leading-relaxed">
+              {insight.ground_truth.length > 150
+                ? insight.ground_truth.slice(0, 150) + "..."
+                : insight.ground_truth}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-600 italic">No insight yet</p>
+      )}
+
+      <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-800">
+        <span className="text-xs text-gray-500">
+          {interest.indicators?.length || 0} indicators
+        </span>
+        <span className="text-xs text-gray-500">
+          {interest.market_filters?.length || 0} market sources
+        </span>
+        <span
+          className={`text-xs ml-auto ${
+            interest.priority === "high"
+              ? "text-red-400"
+              : interest.priority === "medium"
+              ? "text-yellow-400"
+              : "text-gray-500"
+          }`}
+        >
+          {interest.priority}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RecentInsightRow({
+  insight,
+  defaultExpanded = false,
+}: {
+  insight: Insight;
+  defaultExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  return (
+    <div className="card">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left flex items-center justify-between"
+      >
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <h4 className="text-sm text-white font-medium truncate">
+            {insight.title}
+          </h4>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
+              confidenceColors[insight.confidence] ||
+              "bg-gray-500/20 text-gray-400"
+            }`}
+          >
+            {insight.confidence}
+          </span>
+          <span className="text-xs text-gray-600 whitespace-nowrap">
+            {insight.domain}
+          </span>
+        </div>
+        <svg
+          className={`w-4 h-4 text-gray-500 flex-shrink-0 ml-2 transition-transform ${
+            expanded ? "rotate-180" : ""
+          }`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M19 9l-7 7-7-7"
+          />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-3">
+          <div>
+            <h5 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+              Ground Truth
+            </h5>
+            <p className="text-sm text-gray-300 leading-relaxed">
+              {insight.ground_truth}
+            </p>
+          </div>
+          <div>
+            <h5 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+              Trend Analysis
+            </h5>
+            <p className="text-sm text-gray-300 leading-relaxed">
+              {insight.trend_analysis}
+            </p>
+          </div>
+          <div>
+            <h5 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+              Prediction
+            </h5>
+            <p className="text-sm text-gray-300 leading-relaxed">
+              {insight.prediction}
+            </p>
+          </div>
+          {insight.action_items && insight.action_items.length > 0 && (
+            <div>
+              <h5 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
+                Action Items
+              </h5>
+              <ul className="list-disc list-inside text-sm text-gray-300 space-y-1">
+                {insight.action_items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [dashData, setDashData] = useState<DashboardData | null>(null);
   const [sentiment, setSentiment] = useState<SentimentData | null>(null);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [interests, setInterests] = useState<UserInterest[]>([]);
+  const [insights, setInsights] = useState<Insight[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
         setLoading(true);
-        const [metaRes, dashRes, predsRes, sentRes] = await Promise.all([
-          fetch(`${API_BASE}/api/meta/stats`),
-          fetch(`${API_BASE}/api/dashboard/stats`),
-          fetch(`${API_BASE}/api/predictions/`),
-          fetch(`${API_BASE}/api/dashboard/sentiment`),
-        ]);
+        const [metaRes, dashRes, predsRes, sentRes, interestsData, insightsData] =
+          await Promise.all([
+            fetch(`${API_BASE}/api/meta/stats`),
+            fetch(`${API_BASE}/api/dashboard/stats`),
+            fetch(`${API_BASE}/api/predictions/`),
+            fetch(`${API_BASE}/api/dashboard/sentiment`),
+            getInterests().catch(() => [] as UserInterest[]),
+            getInsights().catch(() => [] as Insight[]),
+          ]);
 
         if (metaRes.ok) setStats(await metaRes.json());
         if (dashRes.ok) setDashData(await dashRes.json());
         if (sentRes.ok) setSentiment(await sentRes.json());
+        setInterests(interestsData);
+        setInsights(insightsData);
 
         if (predsRes.ok) {
           const predsData = await predsRes.json();
@@ -100,6 +289,24 @@ export default function DashboardPage() {
   };
 
   const totalSources = stats?.total_sources || dashData?.total_sources || 0;
+
+  const activeInterests = interests.filter((i) => i.active && i.enabled);
+
+  // Map domain -> latest insight for interest cards
+  const insightByDomain: Record<string, Insight> = {};
+  for (const ins of insights) {
+    if (
+      !insightByDomain[ins.domain] ||
+      ins.created_at > insightByDomain[ins.domain].created_at
+    ) {
+      insightByDomain[ins.domain] = ins;
+    }
+  }
+
+  const recentInsights = insights
+    .filter((i) => !i.stale)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 5);
 
   return (
     <div className="space-y-8">
@@ -158,6 +365,53 @@ export default function DashboardPage() {
               value={stats?.avg_brier_score != null ? stats.avg_brier_score.toFixed(3) : "N/A"}
             />
           </div>
+
+          {/* Interest-based overview cards */}
+          {activeInterests.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-white">
+                  Tracked Interests
+                </h3>
+                <a
+                  href="/interests"
+                  className="text-sm text-accent-blue hover:text-accent-blue/80 transition-colors"
+                >
+                  Manage interests
+                </a>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {activeInterests.map((interest) => {
+                  // Match interest to insight by category/name as domain
+                  const matchedInsight =
+                    insightByDomain[interest.category] ||
+                    insightByDomain[interest.name.toLowerCase()] ||
+                    insightByDomain[interest.name];
+                  return (
+                    <InterestCard
+                      key={interest.id}
+                      interest={interest}
+                      insight={matchedInsight}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Recent Insights */}
+          {recentInsights.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-white">
+                Recent Insights
+              </h3>
+              <div className="space-y-3">
+                {recentInsights.map((insight) => (
+                  <RecentInsightRow key={insight.id} insight={insight} />
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
             {/* Recent predictions */}
