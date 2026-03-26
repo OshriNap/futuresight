@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FutureSight</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
 <style>
 :root {
   --bg: #0a0a0f; --bg2: #12121a; --bg3: #1a1a25; --border: #2a2a3a;
@@ -552,116 +553,335 @@ loaders.methods = async () => {
 
 // ── Event Graph ──
 loaders.graph = async () => {
-  const data = await api('/api/graph/');
-  const nodes = data.nodes || [];
-  const edges = data.edges || [];
+  const typeColor = {geopolitical:'#ef4444',economic:'#f59e0b',tech:'#06b6d4',social:'#a855f7',environmental:'#22c55e'};
+  const relColor = {causes:'#22c55e',amplifies:'#3b82f6',mitigates:'#ef4444',correlates:'#6b7280',precedes:'#f59e0b'};
+  let cy = null;
+  let currentMode = 'hubs';
 
-  // Build node map
-  const nodeMap = {};
-  nodes.forEach(n => nodeMap[n.id] = n);
-
-  const typeColor = {geopolitical:'var(--red)',economic:'var(--amber)',tech:'var(--cyan)',social:'var(--purple)',environmental:'var(--green)'};
-
-  // SVG force-directed graph
-  const W = 800, H = 500;
-
-  // Position nodes in a circle if we have them, or show empty state
-  let graphHtml = '';
-  if (nodes.length === 0) {
-    graphHtml = `<div style="color:var(--text3);padding:40px;text-align:center">
-      <div style="font-size:48px;margin-bottom:12px">&#x1f578;</div>
-      <div>No event nodes yet. Events will be added as the system collects and analyzes data.</div>
-    </div>`;
-  } else {
-    // Position nodes
-    const positions = {};
-    nodes.forEach((n, i) => {
-      const angle = (2 * Math.PI * i) / nodes.length;
-      const r = Math.min(W, H) * 0.35;
-      positions[n.id] = { x: W/2 + r * Math.cos(angle), y: H/2 + r * Math.sin(angle) };
-    });
-
-    const edgeLines = edges.map(e => {
-      const s = positions[e.source_node_id], t = positions[e.target_node_id];
-      if (!s || !t) return '';
-      const opacity = 0.2 + e.strength * 0.6;
-      return `<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="var(--cyan)" stroke-opacity="${opacity}" stroke-width="${1 + e.strength * 2}"/>`;
-    }).join('');
-
-    const nodeCircles = nodes.map(n => {
-      const p = positions[n.id];
-      const col = typeColor[n.event_type] || 'var(--blue)';
-      const r = 6 + (n.confidence || 0.5) * 8;
-      return `<g>
-        <circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${col}" fill-opacity="0.7" stroke="${col}" stroke-width="1.5"/>
-        <title>${n.title} (${n.event_type}, ${n.status})</title>
-      </g>`;
-    }).join('');
-
-    graphHtml = `<svg width="100%" viewBox="0 0 ${W} ${H}" style="background:var(--bg);border-radius:8px">${edgeLines}${nodeCircles}</svg>`;
-  }
-
-  // Legend
-  const legend = Object.entries(typeColor).map(([t,c]) =>
-    `<span style="margin-right:12px"><span class="dot" style="background:${c}"></span>${t}</span>`
-  ).join('');
-
-  // Edge relationship table
-  const edgeRows = edges.slice(0, 20).map(e => {
-    const src = nodeMap[e.source_node_id];
-    const tgt = nodeMap[e.target_node_id];
-    const relColor = {causes:'b-red',correlates:'b-blue',precedes:'b-amber',amplifies:'b-purple',mitigates:'b-green'}[e.relationship_type] || 'b-blue';
-    return `<tr>
-      <td style="max-width:200px">${src?.title || '?'}</td>
-      <td><span class="badge ${relColor}">${e.relationship_type}</span></td>
-      <td style="max-width:200px">${tgt?.title || '?'}</td>
-      <td>${(e.strength * 100).toFixed(0)}%</td>
-      <td style="color:var(--text2);font-size:11px">${e.reasoning || '—'}</td>
-    </tr>`;
-  }).join('');
-
-  document.getElementById('tab-graph').innerHTML = `
-    <h2 style="margin-bottom:16px">Event Causality Graph</h2>
-    <div class="stats">
-      <div class="card stat"><div class="value">${nodes.length}</div><div class="label">Nodes</div></div>
-      <div class="card stat"><div class="value">${edges.length}</div><div class="label">Edges</div></div>
-      <div class="card stat"><div class="value">${new Set(nodes.map(n=>n.event_type)).size}</div><div class="label">Event Types</div></div>
-      <div class="card stat"><div class="value">${new Set(edges.map(e=>e.relationship_type)).size}</div><div class="label">Rel. Types</div></div>
-    </div>
-    <div class="card">
-      <h3>Graph</h3>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${legend}</div>
-      ${graphHtml}
-    </div>
-    ${edgeRows ? `<div class="card"><h3>Causal Relationships</h3>
-      <table><thead><tr><th>Source Event</th><th>Relationship</th><th>Target Event</th><th>Strength</th><th>Reasoning</th></tr></thead>
-      <tbody>${edgeRows}</tbody></table>
-    </div>` : ''}
-    <div class="card">
-      <h3>Node Details</h3>
-      <div class="scroll" style="max-height:400px">
-        ${nodes.map(n => `
-          <div class="run">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <div>
-                <span class="dot" style="background:${typeColor[n.event_type]||'var(--blue)'}"></span>
-                <strong style="font-size:13px">${n.title}</strong>
-              </div>
-              <div>
-                <span class="badge b-blue">${n.event_type}</span>
-                <span class="badge ${n.status==='active'?'b-green':n.status==='resolved'?'b-amber':'b-red'}">${n.status}</span>
-              </div>
-            </div>
-            ${n.description ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${n.description}</div>` : ''}
-            <div style="font-size:10px;color:var(--text3);margin-top:4px">
-              ${n.confidence != null ? `Confidence: ${pct(n.confidence)}` : ''}
-              ${n.occurred_at ? ` · Occurred: ${ago(n.occurred_at)}` : ''}
-            </div>
-          </div>
-        `).join('') || '<div style="color:var(--text3);padding:20px">No events yet</div>'}
+  const container = document.getElementById('tab-graph');
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:4px" id="graph-mode-btns">
+        <button class="btn btn-p btn-sm" data-mode="hubs" onclick="switchGraphMode('hubs')">Hubs</button>
+        <button class="btn btn-sm" data-mode="clusters" onclick="switchGraphMode('clusters')">Clusters</button>
+        <button class="btn btn-sm" data-mode="search" onclick="switchGraphMode('search')">Search</button>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;font-size:11px">
+        ${Object.entries(typeColor).map(([t,c]) => '<span><span class="dot" style="background:'+c+'"></span>'+t+'</span>').join('')}
+        <select id="graph-rel-filter" onchange="reloadGraph()" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:11px">
+          <option value="">All relationships</option>
+          <option value="causes">causes</option>
+          <option value="amplifies">amplifies</option>
+          <option value="mitigates">mitigates</option>
+          <option value="correlates">correlates</option>
+          <option value="precedes">precedes</option>
+        </select>
+        <label style="color:var(--text3)">Min str:
+          <input id="graph-str-slider" type="range" min="0" max="90" value="10" onchange="reloadGraph()" style="width:80px;vertical-align:middle">
+          <span id="graph-str-val">0.1</span>
+        </label>
       </div>
     </div>
+    <div id="graph-search-bar" style="display:none;margin-bottom:12px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="graph-search-input" type="text" placeholder="Search events..." style="flex:1;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:13px" oninput="debounceSearch()">
+        <label style="font-size:11px;color:var(--text3)">Hops:
+          <select id="graph-hops" onchange="debounceSearch()" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px;font-size:11px">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+          </select>
+        </label>
+        <button class="btn btn-sm" onclick="document.getElementById('graph-search-input').value='';reloadGraph()">Clear</button>
+      </div>
+    </div>
+    <div id="cy" style="width:100%;height:500px;background:var(--bg);border:1px solid var(--border);border-radius:8px"></div>
+    <div id="graph-stats" style="display:flex;gap:24px;padding:8px 0;font-size:11px;color:var(--text3)"></div>
+    <div id="graph-tooltip" style="display:none;position:fixed;background:rgba(10,10,15,0.95);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;max-width:300px;z-index:1000;pointer-events:none"></div>
   `;
+
+  function getFilters() {
+    const rel = document.getElementById('graph-rel-filter')?.value || '';
+    const strVal = (document.getElementById('graph-str-slider')?.value || 10) / 100;
+    document.getElementById('graph-str-val').textContent = strVal.toFixed(1);
+    return { rel, minStr: strVal };
+  }
+
+  function initCy(elements) {
+    if (cy) cy.destroy();
+    cy = cytoscape({
+      container: document.getElementById('cy'),
+      elements: elements,
+      style: [
+        { selector: 'node', style: {
+          'background-color': 'data(color)',
+          'label': 'data(label)',
+          'font-size': '9px',
+          'color': '#ccc',
+          'text-outline-color': '#0a0a0f',
+          'text-outline-width': 2,
+          'text-valign': 'bottom',
+          'text-margin-y': 4,
+          'width': 'data(size)',
+          'height': 'data(size)',
+          'border-width': 1,
+          'border-color': 'data(color)',
+          'border-opacity': 0.5,
+        }},
+        { selector: 'node.hub', style: {
+          'font-size': '10px',
+          'font-weight': 'bold',
+          'border-width': 2,
+        }},
+        { selector: 'node.cluster-node', style: {
+          'shape': 'round-rectangle',
+          'width': 'data(size)',
+          'height': 'data(size)',
+          'font-size': '14px',
+          'font-weight': 'bold',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'background-opacity': 0.3,
+          'border-width': 3,
+        }},
+        { selector: 'node.search-match', style: {
+          'border-width': 3,
+          'border-color': '#4a9eff',
+          'border-style': 'double',
+        }},
+        { selector: 'edge', style: {
+          'width': 'data(width)',
+          'line-color': 'data(color)',
+          'target-arrow-color': 'data(color)',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'opacity': 0.6,
+          'arrow-scale': 0.8,
+        }},
+        { selector: 'edge.cluster-edge', style: {
+          'width': 'data(width)',
+          'curve-style': 'bezier',
+          'line-style': 'dashed',
+          'opacity': 0.8,
+          'arrow-scale': 1.2,
+        }},
+      ],
+      layout: { name: 'cose', animate: true, animationDuration: 800, nodeRepulsion: 8000, idealEdgeLength: 120, gravity: 0.3 },
+      minZoom: 0.2,
+      maxZoom: 5,
+    });
+
+    // Tooltips
+    const tooltip = document.getElementById('graph-tooltip');
+    cy.on('mouseover', 'node', e => {
+      const d = e.target.data();
+      tooltip.innerHTML = '<div style="font-weight:600;color:white;margin-bottom:4px">' + (d.fullTitle || d.label) + '</div>' +
+        '<div style="color:#888;margin-bottom:6px">' + (d.eventType || '') + (d.confidence != null ? ' &middot; '+Math.round(d.confidence*100)+'%' : '') + '</div>' +
+        '<div style="color:#aaa">Connections: ' + e.target.degree() + '</div>' +
+        (d.nodeCount ? '<div style="color:#aaa">Nodes: '+d.nodeCount+' &middot; Edges: '+d.edgeCount+'</div>' : '') +
+        '<div style="color:#666;margin-top:6px;font-size:10px">Click to expand</div>';
+      tooltip.style.display = 'block';
+    });
+    cy.on('mousemove', 'node', e => {
+      tooltip.style.left = e.originalEvent.clientX + 12 + 'px';
+      tooltip.style.top = e.originalEvent.clientY + 12 + 'px';
+    });
+    cy.on('mouseout', 'node', () => { tooltip.style.display = 'none'; });
+
+    cy.on('mouseover', 'edge', e => {
+      const d = e.target.data();
+      tooltip.innerHTML = '<div style="color:white">' + d.relType + '</div>' +
+        '<div style="color:#aaa">Strength: ' + (d.strength != null ? (d.strength*100).toFixed(0)+'%' : d.count||'') + '</div>' +
+        (d.reasoning ? '<div style="color:#666;margin-top:4px;font-size:11px">'+d.reasoning+'</div>' : '');
+      tooltip.style.display = 'block';
+    });
+    cy.on('mousemove', 'edge', e => {
+      tooltip.style.left = e.originalEvent.clientX + 12 + 'px';
+      tooltip.style.top = e.originalEvent.clientY + 12 + 'px';
+    });
+    cy.on('mouseout', 'edge', () => { tooltip.style.display = 'none'; });
+
+    // Click to expand
+    cy.on('tap', 'node', async e => {
+      const d = e.target.data();
+      if (d.clusterId) {
+        await loadHubs(d.clusterId);
+        return;
+      }
+      if (!d.nodeId) return;
+      const f = getFilters();
+      let url = '/api/graph/node/' + d.nodeId + '/connections?depth=1&min_strength=' + f.minStr;
+      if (f.rel) url += '&relationship_type=' + f.rel;
+      const data = await api(url);
+      const newEls = graphDataToElements(data, []);
+      newEls.forEach(el => {
+        if (!cy.getElementById(el.data.id).length) {
+          cy.add(el);
+        }
+      });
+      cy.layout({ name: 'cose', animate: true, animationDuration: 500, fit: false, nodeRepulsion: 6000 }).run();
+      updateStats();
+    });
+
+    updateStats();
+  }
+
+  function graphDataToElements(data, hubIds) {
+    const elements = [];
+    const nodes = data.nodes || [];
+    const edges = data.edges || [];
+
+    const edgeCounts = {};
+    edges.forEach(e => {
+      edgeCounts[e.source_node_id] = (edgeCounts[e.source_node_id] || 0) + 1;
+      edgeCounts[e.target_node_id] = (edgeCounts[e.target_node_id] || 0) + 1;
+    });
+
+    nodes.forEach(n => {
+      const deg = edgeCounts[n.id] || 1;
+      const sz = Math.min(50, 12 + deg * 3);
+      const el = {
+        data: {
+          id: 'n-' + n.id,
+          nodeId: n.id,
+          label: n.title.length > 40 ? n.title.slice(0, 38) + '\u2026' : n.title,
+          fullTitle: n.title,
+          color: typeColor[n.event_type] || '#6b7280',
+          eventType: n.event_type,
+          confidence: n.confidence,
+          size: sz,
+        },
+      };
+      if (hubIds.includes(n.id)) el.classes = 'hub';
+      elements.push(el);
+    });
+
+    edges.forEach(e => {
+      elements.push({
+        data: {
+          id: 'e-' + e.id,
+          source: 'n-' + e.source_node_id,
+          target: 'n-' + e.target_node_id,
+          relType: e.relationship_type,
+          color: relColor[e.relationship_type] || '#6b7280',
+          width: 1 + e.strength * 4,
+          strength: e.strength,
+          reasoning: e.reasoning,
+        },
+      });
+    });
+
+    return elements;
+  }
+
+  function updateStats() {
+    const n = cy ? cy.nodes().length : 0;
+    const e = cy ? cy.edges().length : 0;
+    document.getElementById('graph-stats').innerHTML =
+      '<span>Showing <span style="color:var(--text)">' + n + '</span> nodes</span>' +
+      '<span>Edges: <span style="color:var(--text)">' + e + '</span></span>' +
+      '<span style="margin-left:auto;color:var(--text3)">Pan: drag &middot; Zoom: scroll &middot; Expand: click node</span>';
+  }
+
+  window.switchGraphMode = async (mode) => {
+    currentMode = mode;
+    document.querySelectorAll('#graph-mode-btns button').forEach(b => {
+      b.className = b.dataset.mode === mode ? 'btn btn-p btn-sm' : 'btn btn-sm';
+    });
+    document.getElementById('graph-search-bar').style.display = mode === 'search' ? 'block' : 'none';
+    await reloadGraph();
+  };
+
+  async function loadHubs(eventType) {
+    const f = getFilters();
+    let url = '/api/graph/hubs?limit=20&min_strength=' + f.minStr;
+    if (eventType) url += '&event_type=' + eventType;
+    if (f.rel) url += '&relationship_type=' + f.rel;
+    const data = await api(url);
+    const hubIds = (data.nodes || []).slice(0, 20).map(n => n.id);
+    const elements = graphDataToElements(data, hubIds);
+    initCy(elements);
+  }
+
+  async function loadClusters() {
+    const data = await api('/api/graph/clusters');
+    const elements = [];
+
+    (data.clusters || []).forEach(c => {
+      const sz = Math.min(100, 30 + Math.sqrt(c.node_count) * 5);
+      elements.push({
+        data: {
+          id: 'cluster-' + c.event_type,
+          clusterId: c.event_type,
+          label: c.event_type + '\n' + c.node_count + ' nodes',
+          color: typeColor[c.event_type] || '#6b7280',
+          eventType: c.event_type,
+          size: sz,
+          nodeCount: c.node_count,
+          edgeCount: c.edge_count,
+        },
+        classes: 'cluster-node',
+      });
+    });
+
+    (data.inter_cluster_edges || []).forEach((e, i) => {
+      elements.push({
+        data: {
+          id: 'ce-' + i,
+          source: 'cluster-' + e.source_type,
+          target: 'cluster-' + e.target_type,
+          relType: e.dominant_relationship,
+          color: relColor[e.dominant_relationship] || '#6b7280',
+          width: Math.min(8, 1 + Math.sqrt(e.count) * 0.5),
+          count: e.count,
+        },
+        classes: 'cluster-edge',
+      });
+    });
+
+    initCy(elements);
+    cy.layout({ name: 'circle', animate: true }).run();
+  }
+
+  let searchTimeout = null;
+  window.debounceSearch = () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(reloadGraph, 300);
+  };
+
+  async function loadSearch() {
+    const q = document.getElementById('graph-search-input')?.value?.trim();
+    if (!q || q.length < 2) {
+      if (cy) cy.destroy();
+      cy = null;
+      updateStats();
+      return;
+    }
+    const f = getFilters();
+    const hops = document.getElementById('graph-hops')?.value || 2;
+    let url = '/api/graph/search?q=' + encodeURIComponent(q) + '&hops=' + hops + '&min_strength=' + f.minStr;
+    if (f.rel) url += '&relationship_type=' + f.rel;
+    const data = await api(url);
+    const elements = graphDataToElements(data, []);
+
+    const qLower = q.toLowerCase();
+    elements.forEach(el => {
+      if (el.data.fullTitle && el.data.fullTitle.toLowerCase().includes(qLower)) {
+        el.classes = (el.classes || '') + ' search-match';
+      }
+    });
+
+    initCy(elements);
+  }
+
+  window.reloadGraph = async () => {
+    if (currentMode === 'hubs') await loadHubs();
+    else if (currentMode === 'clusters') await loadClusters();
+    else if (currentMode === 'search') await loadSearch();
+  };
+
+  // Initial load
+  await loadHubs();
 };
 
 // ── Interests ──
@@ -1087,7 +1307,7 @@ loaders.evolution = async () => {
     <div class="actions">
       <button class="btn btn-p" onclick="doEvolution(this)">Run Evolution Cycle</button>
       <button class="btn" onclick="doBacktest(this)">Backtest Evolution (10 gen)</button>
-      <button class="btn" onclick="doProposeMutations(this)">Ollama: Preview Mutations</button>
+      <button class="btn" onclick="doProposeMutations(this)">Haiku: Preview Mutations</button>
     </div>
 
     <div class="card">
