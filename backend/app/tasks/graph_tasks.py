@@ -1,12 +1,13 @@
 """Event graph builder — creates nodes and causal edges from collected data.
 
-Extracts events from high-signal sources and links related events.
-Only creates edges when there's strong topical overlap, not loose keyword matches.
+Uses MiniLM embeddings for semantic similarity and NLI cross-encoder for
+causal relationship classification. Dynamic knee-based thresholding separates
+signal from noise in the similarity distribution.
 """
 
 import logging
-import re
 
+import numpy as np
 from sqlalchemy import select
 
 from app.database import async_session
@@ -25,71 +26,72 @@ TYPE_MAP = {
     "society": "social", "general": "social",
 }
 
-# Causal patterns: (source_keywords, target_keywords, relationship_type)
-# Both source AND target must match AT LEAST 2 keywords for an edge
-CAUSAL_PATTERNS = [
-    (["sanction", "tariff", "trade war", "embargo"],
-     ["oil price", "inflation", "economic", "gdp", "recession", "economy"],
-     "causes"),
-    (["war", "invasion", "military", "attack", "strike"],
-     ["oil", "energy", "refugee", "humanitarian", "civilian"],
-     "causes"),
-    (["election", "vote", "primary", "nominee"],
-     ["policy", "legislation", "regulation", "executive order"],
-     "precedes"),
-    (["fed", "federal reserve", "interest rate", "monetary policy"],
-     ["stock market", "housing", "mortgage", "bond", "treasury"],
-     "causes"),
-    (["climate change", "global warming", "emissions", "carbon"],
-     ["weather", "hurricane", "drought", "flood", "wildfire", "sea level"],
-     "amplifies"),
-    (["pandemic", "outbreak", "virus", "covid", "measles"],
-     ["vaccine", "quarantine", "travel ban", "health care", "hospital"],
-     "causes"),
-    (["oil", "opec", "crude", "petroleum", "energy price"],
-     ["gas price", "inflation", "transport", "airline", "shipping"],
-     "causes"),
-    (["cyber attack", "hack", "data breach", "ransomware"],
-     ["cybersecurity", "regulation", "privacy law", "security"],
-     "precedes"),
-    (["ai", "artificial intelligence", "chatgpt", "openai", "llm"],
-     ["job", "automation", "regulation", "productivity", "workforce"],
-     "amplifies"),
-    (["bitcoin", "crypto", "ethereum", "cryptocurrency"],
-     ["regulation", "sec", "financial", "exchange", "defi"],
-     "correlates"),
-    (["ukraine", "russia", "zelenskyy", "putin", "moscow"],
-     ["nato", "europe", "defense", "weapons", "aid"],
-     "causes"),
-    (["iran", "tehran", "nuclear"],
-     ["sanctions", "oil", "middle east", "israel"],
-     "amplifies"),
-    (["china", "beijing", "xi jinping"],
-     ["taiwan", "trade", "tariff", "semiconductor", "supply chain"],
-     "amplifies"),
-]
 
-STOP_WORDS = {
-    "the", "a", "an", "in", "on", "at", "to", "for", "of", "is", "are", "was", "were",
-    "will", "be", "by", "from", "with", "has", "have", "had", "its", "it", "this", "that",
-    "and", "or", "but", "not", "no", "as", "if", "than", "more", "most", "also", "about",
-    "says", "said", "new", "could", "would", "may", "after", "over", "into", "up", "out",
-    "just", "can", "been", "how", "what", "why", "who", "where", "when", "between",
-}
+def find_knee_threshold(similarities: np.ndarray, fallback: float = 0.65) -> float:
+    """Find the knee point in the similarity distribution."""
+    if len(similarities) < 5:
+        return fallback
+
+    sorted_sims = np.sort(similarities)[::-1]
+
+    if len(sorted_sims) > 10_000:
+        indices = np.linspace(0, len(sorted_sims) - 1, 10_000, dtype=int)
+        sorted_sims = sorted_sims[indices]
+
+    try:
+        from kneed import KneeLocator
+        kl = KneeLocator(
+            range(len(sorted_sims)),
+            sorted_sims,
+            curve="convex",
+            direction="decreasing",
+            interp_method="interp1d",
+        )
+        if kl.knee is not None:
+            knee_value = float(sorted_sims[kl.knee])
+            if 0.2 < knee_value < 0.95:
+                return knee_value
+    except Exception:
+        pass
+
+    return fallback
 
 
-def _extract_terms(title: str) -> set[str]:
-    """Extract meaningful multi-word and single-word terms."""
-    lower = title.lower()
-    # Single words minus stop words
-    words = {w for w in re.findall(r'[a-z]+', lower) if w not in STOP_WORDS and len(w) > 3}
-    return words
+def classify_relationship(nli_scores: dict[str, float]) -> str:
+    """Map NLI scores to a relationship type."""
+    ent = nli_scores.get("entailment", 0)
+    con = nli_scores.get("contradiction", 0)
+
+    if con > 0.5:
+        return "mitigates"
+    if ent > 0.8:
+        return "causes"
+    if ent > 0.5:
+        return "amplifies"
+    if ent > 0.3:
+        return "correlates"
+    return "precedes"
 
 
-def _match_score(text: str, keywords: list[str]) -> int:
-    """Count how many keywords match in the text. Supports multi-word keywords."""
-    lower = text.lower()
-    return sum(1 for kw in keywords if kw in lower)
+def build_candidate_pairs(
+    embeddings: np.ndarray, threshold: float
+) -> list[tuple[int, int, float]]:
+    """Find all pairs of nodes with cosine similarity above threshold."""
+    n = len(embeddings)
+    if n < 2:
+        return []
+
+    sim_matrix = embeddings @ embeddings.T
+    i_indices, j_indices = np.triu_indices(n, k=1)
+    sims = sim_matrix[i_indices, j_indices]
+
+    mask = sims >= threshold
+    pairs = [
+        (int(i_indices[k]), int(j_indices[k]), float(sims[k]))
+        for k in np.where(mask)[0]
+    ]
+
+    return pairs
 
 
 def _detect_event_type(title: str, category: str | None) -> str:
