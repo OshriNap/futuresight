@@ -2,11 +2,13 @@
 
 import numpy as np
 import pytest
+from unittest.mock import patch, MagicMock
 
 from app.tasks.graph_tasks import (
     find_knee_threshold,
     classify_relationship,
     build_candidate_pairs,
+    run_nli_causal,
 )
 
 
@@ -95,3 +97,25 @@ class TestBuildCandidatePairs:
         pairs = build_candidate_pairs(embeddings, threshold=0.0)
         assert len(pairs) == 1
         assert abs(pairs[0][2]) < 0.01
+
+
+class TestRunNliCausal:
+    @patch("app.tasks.graph_tasks._get_nli_pipeline")
+    def test_returns_scores_for_each_pair(self, mock_get_pipe):
+        mock_pipe = MagicMock()
+        mock_pipe.return_value = {
+            "labels": ["entailment", "neutral", "contradiction"],
+            "scores": [0.7, 0.2, 0.1],
+        }
+        mock_get_pipe.return_value = mock_pipe
+        pairs = [("Fed raises rates", "Housing market slows")]
+        results = run_nli_causal(pairs)
+        assert len(results) == 1
+        assert results[0]["entailment"] == 0.7
+        assert results[0]["contradiction"] == 0.1
+
+    @patch("app.tasks.graph_tasks._get_nli_pipeline")
+    def test_empty_pairs_returns_empty(self, mock_get_pipe):
+        results = run_nli_causal([])
+        assert results == []
+        mock_get_pipe.assert_not_called()

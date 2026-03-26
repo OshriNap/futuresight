@@ -94,6 +94,60 @@ def build_candidate_pairs(
     return pairs
 
 
+# Lazy-loaded NLI pipeline (shared with nli_tool.py)
+_nli_pipeline = None
+
+
+def _get_nli_pipeline():
+    global _nli_pipeline
+    if _nli_pipeline is None:
+        import torch
+        from transformers import pipeline as hf_pipeline
+
+        device = 0 if torch.cuda.is_available() else -1
+        logger.info(f"Loading NLI model for graph edges on {'GPU' if device == 0 else 'CPU'}...")
+        _nli_pipeline = hf_pipeline(
+            "zero-shot-classification",
+            model="cross-encoder/nli-distilroberta-base",
+            device=device,
+        )
+        logger.info("NLI model loaded for graph edges.")
+    return _nli_pipeline
+
+
+def run_nli_causal(pairs: list[tuple[str, str]]) -> list[dict[str, float]]:
+    """Run NLI inference on (source_title, target_title) pairs.
+
+    For each pair, tests "The first event led to the second event"
+    and returns entailment/contradiction/neutral scores.
+    """
+    if not pairs:
+        return []
+
+    pipe = _get_nli_pipeline()
+    results = []
+
+    for src_title, tgt_title in pairs:
+        premise = f"{src_title}. {tgt_title}."
+        try:
+            output = pipe(
+                premise,
+                candidate_labels=["entailment", "contradiction", "neutral"],
+                hypothesis_template="{}",
+            )
+            label_scores = dict(zip(output["labels"], output["scores"]))
+            results.append({
+                "entailment": label_scores.get("entailment", 0),
+                "contradiction": label_scores.get("contradiction", 0),
+                "neutral": label_scores.get("neutral", 0),
+            })
+        except Exception as e:
+            logger.warning(f"NLI causal failed for pair: {e}")
+            results.append({"entailment": 0, "contradiction": 0, "neutral": 1.0})
+
+    return results
+
+
 def _detect_event_type(title: str, category: str | None) -> str:
     # Try mapped category first, but skip slugs that aren't real categories
     if category and category in TYPE_MAP:
@@ -121,15 +175,23 @@ def _detect_event_type(title: str, category: str | None) -> str:
 
 
 async def build_event_graph() -> dict:
-    """Build event nodes from sources and find causal relationships.
+    """Build event nodes from sources and find causal edges via embeddings + NLI.
 
-    Only creates edges when there's strong topical overlap (2+ keyword matches).
+    1. Create nodes from new high-signal sources
+    2. Compute embeddings for new nodes
+    3. Find candidate pairs using knee-detected similarity threshold
+    4. Classify relationships via NLI
+    5. Create edges with temporal ordering
     """
+    import asyncio
+    from app.tasks.embedding_tasks import _compute_embeddings
+
     nodes_created = 0
     edges_created = 0
+    threshold = 0.65  # default, will be overwritten by knee detection
 
     async with async_session() as db:
-        # Get sources worth tracking
+        # --- Node creation (unchanged logic) ---
         from app.tasks.prediction_tasks import _is_sports_or_entertainment
 
         poly_sources = await db.execute(
@@ -139,17 +201,14 @@ async def build_event_graph() -> dict:
             .order_by(Source.updated_at.desc())
             .limit(200)
         )
-
         news_sources = await db.execute(
             select(Source)
             .where(Source.platform.in_(["gdelt", "reddit"]))
             .order_by(Source.updated_at.desc())
             .limit(200)
         )
-
         all_sources = list(poly_sources.scalars().all()) + list(news_sources.scalars().all())
 
-        # Filter junk
         filtered = []
         for s in all_sources:
             if s.platform == "polymarket":
@@ -158,24 +217,19 @@ async def build_event_graph() -> dict:
                     continue
                 if raw.get("liquidityNum", 0) < 500:
                     continue
-            # Skip very short or generic titles
             if len(s.title) < 20:
                 continue
             filtered.append(s)
 
-        # Get existing nodes
         existing_nodes = await db.execute(select(EventNode))
         existing_by_source = {n.source_id: n for n in existing_nodes.scalars().all() if n.source_id}
 
-        # Create nodes
         new_nodes = []
         for source in filtered:
             if source.id in existing_by_source:
                 continue
-
             event_type = _detect_event_type(source.title, source.category)
             confidence = source.current_market_probability if source.platform == "polymarket" else None
-
             node = EventNode(
                 title=source.title[:500],
                 description=(source.description or "")[:500] or None,
@@ -192,72 +246,120 @@ async def build_event_graph() -> dict:
         if new_nodes:
             await db.flush()
 
-        # Get all nodes for edge detection
-        all_nodes_result = await db.execute(select(EventNode).limit(500))
-        all_nodes = all_nodes_result.scalars().all()
+        # --- Edge creation via embeddings + NLI ---
+        if not new_nodes:
+            await db.commit()
+            return {"nodes_created": 0, "edges_created": 0}
+
+        # Load all existing nodes for cross-comparison
+        all_nodes_result = await db.execute(select(EventNode))
+        all_nodes = list(all_nodes_result.scalars().all())
 
         if len(all_nodes) < 2:
             await db.commit()
             return {"nodes_created": nodes_created, "edges_created": 0}
 
-        # Get existing edges
+        node_list = all_nodes
+        new_node_ids = {n.id for n in new_nodes}
+
+        # Compute embeddings for all nodes
+        titles = [n.title for n in node_list]
+        embeddings = await asyncio.to_thread(_compute_embeddings, titles)
+
+        # Compute similarities: new nodes vs all nodes
+        new_indices = [i for i, n in enumerate(node_list) if n.id in new_node_ids]
+        if not new_indices:
+            await db.commit()
+            return {"nodes_created": nodes_created, "edges_created": 0}
+
+        new_embs = embeddings[new_indices]
+        all_sims = new_embs @ embeddings.T
+
+        # Collect all similarity scores for knee detection
+        all_sim_scores = []
+        for row_idx in range(len(new_indices)):
+            new_i = new_indices[row_idx]
+            for j in range(len(node_list)):
+                if new_i != j:
+                    all_sim_scores.append(all_sims[row_idx, j])
+
+        all_sim_scores = np.array(all_sim_scores)
+        threshold = find_knee_threshold(all_sim_scores)
+        logger.info(f"Graph edge threshold (knee): {threshold:.3f}")
+
+        # Build candidate pairs above threshold
         existing_edges = await db.execute(select(EventEdge))
         existing_edge_pairs = {
             (e.source_node_id, e.target_node_id)
             for e in existing_edges.scalars().all()
         }
+        existing_edge_pairs |= {(b, a) for a, b in existing_edge_pairs}
 
-        # Find causal relationships — require strong matches
-        for pattern_src_kws, pattern_tgt_kws, rel_type in CAUSAL_PATTERNS:
-            # Find nodes matching source pattern (2+ keywords)
-            src_matches = [(n, _match_score(n.title, pattern_src_kws))
-                          for n in all_nodes]
-            src_matches = [(n, s) for n, s in src_matches if s >= 1]
+        candidates = []
+        for row_idx in range(len(new_indices)):
+            new_i = new_indices[row_idx]
+            for j in range(len(node_list)):
+                if new_i == j:
+                    continue
+                sim = float(all_sims[row_idx, j])
+                if sim < threshold:
+                    continue
+                node_a = node_list[new_i]
+                node_b = node_list[j]
+                if (node_a.id, node_b.id) in existing_edge_pairs:
+                    continue
+                if (node_b.id, node_a.id) in existing_edge_pairs:
+                    continue
 
-            # Find nodes matching target pattern (2+ keywords)
-            tgt_matches = [(n, _match_score(n.title, pattern_tgt_kws))
-                          for n in all_nodes]
-            tgt_matches = [(n, s) for n, s in tgt_matches if s >= 1]
+                # Temporal ordering: earlier -> source, later -> target
+                time_a = node_a.occurred_at or node_a.created_at
+                time_b = node_b.occurred_at or node_b.created_at
+                if time_a and time_b and time_a <= time_b:
+                    src_node, tgt_node = node_a, node_b
+                elif time_a and time_b:
+                    src_node, tgt_node = node_b, node_a
+                else:
+                    if node_a.title <= node_b.title:
+                        src_node, tgt_node = node_a, node_b
+                    else:
+                        src_node, tgt_node = node_b, node_a
 
-            for src_node, src_score in src_matches:
-                for tgt_node, tgt_score in tgt_matches:
-                    if src_node.id == tgt_node.id:
-                        continue
-                    if (src_node.id, tgt_node.id) in existing_edge_pairs:
-                        continue
+                candidates.append((src_node, tgt_node, sim))
 
-                    # Require combined score of at least 2
-                    combined = src_score + tgt_score
-                    if combined < 2:
-                        continue
+        if not candidates:
+            await db.commit()
+            return {"nodes_created": nodes_created, "edges_created": 0}
 
-                    # Additional check: nodes should share some topical terms
-                    src_terms = _extract_terms(src_node.title)
-                    tgt_terms = _extract_terms(tgt_node.title)
-                    shared = src_terms & tgt_terms
-                    # Either share terms OR strongly match the pattern
-                    if not shared and combined < 3:
-                        continue
+        # Cap candidates to limit NLI calls
+        candidates.sort(key=lambda x: x[2], reverse=True)
+        candidates = candidates[:500]
 
-                    strength = min(0.9, 0.3 + combined * 0.1 + len(shared) * 0.05)
+        # Run NLI classification
+        nli_pairs = [(c[0].title, c[1].title) for c in candidates]
+        nli_results = await asyncio.to_thread(run_nli_causal, nli_pairs)
 
-                    src_kw_str = "/".join(k for k in pattern_src_kws[:3] if k in src_node.title.lower())
-                    tgt_kw_str = "/".join(k for k in pattern_tgt_kws[:3] if k in tgt_node.title.lower())
-                    reasoning = f"{src_kw_str} {rel_type} {tgt_kw_str}"
+        # Create edges
+        for (src_node, tgt_node, sim), nli_scores in zip(candidates, nli_results):
+            rel_type = classify_relationship(nli_scores)
+            ent_score = nli_scores.get("entailment", 0)
+            strength = round(ent_score * sim, 3)
 
-                    edge = EventEdge(
-                        source_node_id=src_node.id,
-                        target_node_id=tgt_node.id,
-                        relationship_type=rel_type,
-                        strength=strength,
-                        reasoning=reasoning,
-                        detected_by="agent",
-                    )
-                    db.add(edge)
-                    existing_edge_pairs.add((src_node.id, tgt_node.id))
-                    edges_created += 1
+            if strength < 0.1:
+                continue
+
+            edge = EventEdge(
+                source_node_id=src_node.id,
+                target_node_id=tgt_node.id,
+                relationship_type=rel_type,
+                strength=strength,
+                reasoning=f"Semantic similarity: {sim:.2f}, NLI entailment: {ent_score:.2f}",
+                detected_by="agent",
+            )
+            db.add(edge)
+            existing_edge_pairs.add((src_node.id, tgt_node.id))
+            edges_created += 1
 
         await db.commit()
 
-    logger.info(f"Event graph: nodes_created={nodes_created}, edges_created={edges_created}")
-    return {"nodes_created": nodes_created, "edges_created": edges_created}
+    logger.info(f"Event graph: nodes={nodes_created}, edges={edges_created}, threshold={threshold:.3f}")
+    return {"nodes_created": nodes_created, "edges_created": edges_created, "threshold": round(threshold, 3)}
