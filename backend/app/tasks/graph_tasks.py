@@ -363,3 +363,130 @@ async def build_event_graph() -> dict:
 
     logger.info(f"Event graph: nodes={nodes_created}, edges={edges_created}, threshold={threshold:.3f}")
     return {"nodes_created": nodes_created, "edges_created": edges_created, "threshold": round(threshold, 3)}
+
+
+async def backfill_graph_edges(batch_size: int = 500) -> dict:
+    """One-time backfill: process all existing nodes to create edges.
+
+    Processes nodes in batches. For each batch, computes embeddings,
+    finds candidates via knee threshold, classifies via NLI, creates edges.
+    """
+    import asyncio
+    from app.tasks.embedding_tasks import _compute_embeddings
+
+    total_edges = 0
+    batches_processed = 0
+
+    async with async_session() as db:
+        all_nodes_result = await db.execute(
+            select(EventNode).order_by(EventNode.created_at.asc())
+        )
+        all_nodes = list(all_nodes_result.scalars().all())
+        logger.info(f"Backfill: {len(all_nodes)} total nodes")
+
+        if len(all_nodes) < 2:
+            return {"total_edges": 0, "batches": 0, "total_nodes": len(all_nodes)}
+
+        titles = [n.title for n in all_nodes]
+        embeddings = await asyncio.to_thread(_compute_embeddings, titles)
+
+        existing_edges = await db.execute(select(EventEdge))
+        existing_edge_pairs = set()
+        for e in existing_edges.scalars().all():
+            existing_edge_pairs.add((e.source_node_id, e.target_node_id))
+            existing_edge_pairs.add((e.target_node_id, e.source_node_id))
+
+        for batch_start in range(0, len(all_nodes), batch_size):
+            batch_end = min(batch_start + batch_size, len(all_nodes))
+            batch_embs = embeddings[batch_start:batch_end]
+
+            sims = batch_embs @ embeddings.T
+
+            sim_scores = []
+            for row_idx in range(len(batch_embs)):
+                global_i = batch_start + row_idx
+                for j in range(len(all_nodes)):
+                    if global_i != j and global_i < j:
+                        sim_scores.append(sims[row_idx, j])
+
+            if not sim_scores:
+                continue
+
+            threshold = find_knee_threshold(np.array(sim_scores))
+            logger.info(f"Backfill batch {batches_processed}: threshold={threshold:.3f}")
+
+            candidates = []
+            for row_idx in range(len(batch_embs)):
+                global_i = batch_start + row_idx
+                for j in range(len(all_nodes)):
+                    if global_i >= j:
+                        continue
+                    sim = float(sims[row_idx, j])
+                    if sim < threshold:
+                        continue
+
+                    node_a = all_nodes[global_i]
+                    node_b = all_nodes[j]
+
+                    if (node_a.id, node_b.id) in existing_edge_pairs:
+                        continue
+
+                    time_a = node_a.occurred_at or node_a.created_at
+                    time_b = node_b.occurred_at or node_b.created_at
+                    if time_a and time_b and time_a <= time_b:
+                        src_node, tgt_node = node_a, node_b
+                    elif time_a and time_b:
+                        src_node, tgt_node = node_b, node_a
+                    else:
+                        if node_a.title <= node_b.title:
+                            src_node, tgt_node = node_a, node_b
+                        else:
+                            src_node, tgt_node = node_b, node_a
+
+                    candidates.append((src_node, tgt_node, sim))
+
+            if not candidates:
+                batches_processed += 1
+                continue
+
+            candidates.sort(key=lambda x: x[2], reverse=True)
+            candidates = candidates[:500]
+
+            nli_pairs = [(c[0].title, c[1].title) for c in candidates]
+            nli_results = await asyncio.to_thread(run_nli_causal, nli_pairs)
+
+            batch_edges = 0
+            for (src_node, tgt_node, sim), nli_scores in zip(candidates, nli_results):
+                rel_type = classify_relationship(nli_scores)
+                ent_score = nli_scores.get("entailment", 0)
+                strength = round(ent_score * sim, 3)
+
+                if strength < 0.1:
+                    continue
+
+                edge = EventEdge(
+                    source_node_id=src_node.id,
+                    target_node_id=tgt_node.id,
+                    relationship_type=rel_type,
+                    strength=strength,
+                    reasoning=f"Semantic similarity: {sim:.2f}, NLI entailment: {ent_score:.2f}",
+                    detected_by="agent",
+                )
+                db.add(edge)
+                existing_edge_pairs.add((src_node.id, tgt_node.id))
+                existing_edge_pairs.add((tgt_node.id, src_node.id))
+                batch_edges += 1
+
+            await db.flush()
+            total_edges += batch_edges
+            batches_processed += 1
+            logger.info(f"Backfill batch {batches_processed}: {batch_edges} edges created")
+
+        await db.commit()
+
+    logger.info(f"Backfill complete: {total_edges} edges across {batches_processed} batches")
+    return {
+        "total_edges": total_edges,
+        "batches": batches_processed,
+        "total_nodes": len(all_nodes),
+    }

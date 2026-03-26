@@ -119,3 +119,12 @@ class TestRunNliCausal:
         results = run_nli_causal([])
         assert results == []
         mock_get_pipe.assert_not_called()
+
+
+from app.tasks.graph_tasks import backfill_graph_edges
+
+
+class TestBackfillGraphEdges:
+    def test_function_exists_and_is_async(self):
+        import asyncio
+        assert asyncio.iscoroutinefunction(backfill_graph_edges)

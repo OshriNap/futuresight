@@ -459,6 +459,14 @@ async def trigger_graph_build():
     return {"status": "completed", "result": result}
 
 
+@router.post("/backfill-graph")
+async def trigger_backfill_graph(batch_size: int = Query(default=500, ge=50, le=2000)):
+    """One-time backfill: create edges for all existing graph nodes via embeddings + NLI."""
+    from app.tasks.graph_tasks import backfill_graph_edges
+    result = await backfill_graph_edges(batch_size=batch_size)
+    return {"status": "completed", "result": result}
+
+
 @router.post("/match-sources")
 async def trigger_matching():
     """Match news/reddit sources to market questions via GPU sentence embeddings."""
@@ -469,7 +477,7 @@ async def trigger_matching():
 
 @router.post("/categorize")
 async def trigger_categorization(limit: int = 0):
-    """Categorize uncategorized market sources using Ollama LLM."""
+    """Categorize uncategorized market sources using local GPU zero-shot classifier."""
     from app.tasks.categorization_tasks import categorize_sources
     result = await categorize_sources(limit=limit)
     return {"status": "completed", "result": result}
@@ -648,7 +656,7 @@ async def trigger_collect_indicators():
 
 @router.post("/generate-insights")
 async def trigger_generate_insights():
-    """Generate draft insights for all enabled interests using local Ollama."""
+    """Generate draft insights for all enabled interests using Claude Haiku."""
     from app.tasks.insight_tasks import generate_insights
     result = await generate_insights()
     return {"status": "completed", "result": result}
@@ -656,7 +664,7 @@ async def trigger_generate_insights():
 
 @router.post("/generate-insight/{interest_id}")
 async def trigger_single_insight(interest_id: str):
-    """Generate a draft insight for a single interest using local Ollama."""
+    """Generate a draft insight for a single interest using Claude Haiku."""
     from app.tasks.insight_tasks import generate_single_insight
     result = await generate_single_insight(interest_id)
     return {"status": "completed", "result": result}
