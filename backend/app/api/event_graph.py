@@ -74,20 +74,185 @@ async def get_event_graph(
     return GraphResponse(nodes=nodes, edges=edges)
 
 
-@router.get("/node/{node_id}/connections", response_model=GraphResponse)
-async def get_node_connections(node_id: uuid.UUID, depth: int = Query(default=2, le=5), db: AsyncSession = Depends(get_db)):
-    """Get a node and its connections up to N hops deep."""
+@router.get("/hubs", response_model=GraphResponse)
+async def get_hub_nodes(
+    limit: int = Query(default=20, le=50),
+    min_strength: float = Query(default=0.1, ge=0.0, le=1.0),
+    event_type: str | None = None,
+    relationship_type: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the most-connected nodes and their neighborhoods."""
+    from sqlalchemy import func, union_all
+
+    out_counts = (
+        select(EventEdge.source_node_id.label("node_id"), func.count().label("cnt"))
+        .group_by(EventEdge.source_node_id)
+    )
+    in_counts = (
+        select(EventEdge.target_node_id.label("node_id"), func.count().label("cnt"))
+        .group_by(EventEdge.target_node_id)
+    )
+    combined = union_all(out_counts, in_counts).subquery()
+    hub_query = (
+        select(combined.c.node_id, func.sum(combined.c.cnt).label("total"))
+        .group_by(combined.c.node_id)
+        .order_by(func.sum(combined.c.cnt).desc())
+        .limit(limit)
+    )
+
+    hub_result = await db.execute(hub_query)
+    hub_ids = {row.node_id for row in hub_result.all()}
+
+    if not hub_ids:
+        return GraphResponse(nodes=[], edges=[])
+
+    edge_query = (
+        select(EventEdge)
+        .where(
+            (EventEdge.source_node_id.in_(hub_ids)) | (EventEdge.target_node_id.in_(hub_ids))
+        )
+        .where(EventEdge.strength >= min_strength)
+    )
+    if relationship_type:
+        edge_query = edge_query.where(EventEdge.relationship_type == relationship_type)
+
+    edges_result = await db.execute(edge_query)
+    edges = edges_result.scalars().all()
+
+    all_node_ids = set(hub_ids)
+    for e in edges:
+        all_node_ids.add(e.source_node_id)
+        all_node_ids.add(e.target_node_id)
+
+    node_query = select(EventNode).where(EventNode.id.in_(all_node_ids))
+    if event_type:
+        node_query = node_query.where(EventNode.event_type == event_type)
+    nodes_result = await db.execute(node_query)
+    nodes = nodes_result.scalars().all()
+
+    returned_ids = {n.id for n in nodes}
+    edges = [e for e in edges if e.source_node_id in returned_ids and e.target_node_id in returned_ids]
+
+    return GraphResponse(nodes=nodes, edges=edges)
+
+
+class ClusterInfo(BaseModel):
+    event_type: str
+    node_count: int
+    edge_count: int
+
+class InterClusterEdge(BaseModel):
+    source_type: str
+    target_type: str
+    count: int
+    dominant_relationship: str
+
+class ClusterResponse(BaseModel):
+    clusters: list[ClusterInfo]
+    inter_cluster_edges: list[InterClusterEdge]
+
+
+@router.get("/clusters", response_model=ClusterResponse)
+async def get_clusters(db: AsyncSession = Depends(get_db)):
+    """Get aggregated cluster view — nodes grouped by event_type."""
+    from sqlalchemy import func
+
+    node_counts = await db.execute(
+        select(EventNode.event_type, func.count(EventNode.id))
+        .group_by(EventNode.event_type)
+    )
+    node_count_map = {row[0]: row[1] for row in node_counts.all()}
+
+    src_alias = select(EventNode.id, EventNode.event_type).subquery("src")
+    tgt_alias = select(EventNode.id, EventNode.event_type).subquery("tgt")
+
+    edge_types_query = (
+        select(
+            src_alias.c.event_type.label("src_type"),
+            tgt_alias.c.event_type.label("tgt_type"),
+            EventEdge.relationship_type,
+            func.count().label("cnt"),
+        )
+        .join(src_alias, EventEdge.source_node_id == src_alias.c.id)
+        .join(tgt_alias, EventEdge.target_node_id == tgt_alias.c.id)
+        .group_by(src_alias.c.event_type, tgt_alias.c.event_type, EventEdge.relationship_type)
+    )
+    edge_types_result = await db.execute(edge_types_query)
+    rows = edge_types_result.all()
+
+    intra_counts: dict[str, int] = {}
+    inter_raw: dict[tuple[str, str], dict[str, int]] = {}
+
+    for src_type, tgt_type, rel_type, cnt in rows:
+        if src_type == tgt_type:
+            intra_counts[src_type] = intra_counts.get(src_type, 0) + cnt
+        else:
+            key = (src_type, tgt_type)
+            if key not in inter_raw:
+                inter_raw[key] = {}
+            inter_raw[key][rel_type] = inter_raw[key].get(rel_type, 0) + cnt
+
+    clusters = [
+        ClusterInfo(
+            event_type=et,
+            node_count=nc,
+            edge_count=intra_counts.get(et, 0),
+        )
+        for et, nc in node_count_map.items()
+    ]
+
+    inter_edges = []
+    for (src_t, tgt_t), rels in inter_raw.items():
+        total = sum(rels.values())
+        dominant = max(rels, key=rels.get)
+        inter_edges.append(InterClusterEdge(
+            source_type=src_t,
+            target_type=tgt_t,
+            count=total,
+            dominant_relationship=dominant,
+        ))
+
+    return ClusterResponse(clusters=clusters, inter_cluster_edges=inter_edges)
+
+
+@router.get("/search", response_model=GraphResponse)
+async def search_graph(
+    q: str = Query(min_length=2, max_length=200),
+    hops: int = Query(default=2, ge=1, le=3),
+    limit: int = Query(default=50, le=100),
+    min_strength: float = Query(default=0.1, ge=0.0, le=1.0),
+    relationship_type: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Search for nodes by title and return their N-hop neighborhood."""
+    match_result = await db.execute(
+        select(EventNode)
+        .where(EventNode.title.ilike(f"%{q}%"))
+        .limit(10)
+    )
+    match_nodes = match_result.scalars().all()
+
+    if not match_nodes:
+        return GraphResponse(nodes=[], edges=[])
+
     visited_ids = set()
-    current_ids = {node_id}
-    all_nodes = []
+    current_ids = {n.id for n in match_nodes}
     all_edges = []
 
-    for _ in range(depth):
+    for _ in range(hops):
         if not current_ids:
             break
-        edge_query = select(EventEdge).where(
-            EventEdge.source_node_id.in_(current_ids) | EventEdge.target_node_id.in_(current_ids)
+        edge_query = (
+            select(EventEdge)
+            .where(
+                (EventEdge.source_node_id.in_(current_ids)) | (EventEdge.target_node_id.in_(current_ids))
+            )
+            .where(EventEdge.strength >= min_strength)
         )
+        if relationship_type:
+            edge_query = edge_query.where(EventEdge.relationship_type == relationship_type)
+
         edges_result = await db.execute(edge_query)
         new_edges = edges_result.scalars().all()
         all_edges.extend(new_edges)
@@ -100,6 +265,66 @@ async def get_node_connections(node_id: uuid.UUID, depth: int = Query(default=2,
         current_ids = next_ids - visited_ids
 
     all_node_ids = visited_ids | current_ids
+    if all_node_ids:
+        nodes_result = await db.execute(
+            select(EventNode).where(EventNode.id.in_(all_node_ids))
+        )
+        all_nodes = list(nodes_result.scalars().all())[:limit]
+    else:
+        all_nodes = list(match_nodes)
+
+    seen_edges = set()
+    deduped_edges = []
+    for e in all_edges:
+        if e.id not in seen_edges:
+            seen_edges.add(e.id)
+            deduped_edges.append(e)
+
+    returned_ids = {n.id for n in all_nodes}
+    deduped_edges = [e for e in deduped_edges if e.source_node_id in returned_ids and e.target_node_id in returned_ids]
+
+    return GraphResponse(nodes=all_nodes, edges=deduped_edges)
+
+
+@router.get("/node/{node_id}/connections", response_model=GraphResponse)
+async def get_node_connections(
+    node_id: uuid.UUID,
+    depth: int = Query(default=2, le=5),
+    min_strength: float = Query(default=0.0, ge=0.0, le=1.0),
+    relationship_type: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a node and its connections up to N hops deep."""
+    visited_ids = set()
+    current_ids = {node_id}
+    all_edges = []
+
+    for _ in range(depth):
+        if not current_ids:
+            break
+        edge_query = (
+            select(EventEdge)
+            .where(
+                EventEdge.source_node_id.in_(current_ids) | EventEdge.target_node_id.in_(current_ids)
+            )
+            .where(EventEdge.strength >= min_strength)
+        )
+        if relationship_type:
+            edge_query = edge_query.where(EventEdge.relationship_type == relationship_type)
+
+        edges_result = await db.execute(edge_query)
+        new_edges = edges_result.scalars().all()
+        all_edges.extend(new_edges)
+
+        next_ids = set()
+        for e in new_edges:
+            next_ids.add(e.source_node_id)
+            next_ids.add(e.target_node_id)
+        visited_ids.update(current_ids)
+        current_ids = next_ids - visited_ids
+
+    all_node_ids = visited_ids | current_ids
+    all_nodes = []
     if all_node_ids:
         nodes_result = await db.execute(select(EventNode).where(EventNode.id.in_(all_node_ids)))
         all_nodes = nodes_result.scalars().all()
